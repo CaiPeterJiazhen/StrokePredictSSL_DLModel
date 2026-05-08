@@ -1,0 +1,24 @@
+paths_config: "paths.yaml"
+sheets:
+  summary: "02_统计汇总"
+  clinical_overview: "01_患者数据总览"
+  clinical_raw: "03_临床量表原始"
+  preprocessed_summary: "06_预处理静息态阶段汇总"
+  preprocessed_files: "07_预处理静息态文件明细"
+labels:
+  fma_full_score: 66
+  low_fma_threshold: 61
+  low_fma_delta_good: 5
+  near_ceiling_delta_good: 3
+  proportional_good_threshold: 0.70
+privacy:
+  pii_columns:
+    - "姓名"
+    - "姓名写法"
+    - "EEG文件夹"
+    - "subject_name"
+    - "set_path"
+    - "fdt_path"
+outputs:
+  cohort_dir: "cohort"
+  figures_dir: "figures"
