@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from stroke_predict.config import load_project_config
+from stroke_predict.config import _load_simple_yaml, load_project_config
 
 
 def test_loads_project_and_paths_config(tmp_path: Path) -> None:
@@ -73,3 +73,32 @@ def test_loads_project_and_paths_config(tmp_path: Path) -> None:
     assert config.label_setting("near_ceiling_delta_good") == 3
     assert config.label_setting("proportional_good_threshold") == 0.70
     assert config.pii_columns == ["姓名", "subject_name"]
+
+
+def test_simple_yaml_loader_parses_supported_config_shape(tmp_path: Path) -> None:
+    config_path = tmp_path / "simple.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                "paths_config: \"paths.yaml\"",
+                "sheets:",
+                "  summary: 02_统计汇总",
+                "labels:",
+                "  fma_full_score: 66",
+                "  proportional_good_threshold: 0.70",
+                "privacy:",
+                "  pii_columns:",
+                "    - 姓名",
+                "    - subject_name",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    parsed = _load_simple_yaml(config_path)
+
+    assert parsed["paths_config"] == "paths.yaml"
+    assert parsed["sheets"] == {"summary": "02_统计汇总"}
+    assert parsed["labels"]["fma_full_score"] == 66
+    assert parsed["labels"]["proportional_good_threshold"] == 0.70
+    assert parsed["privacy"]["pii_columns"] == ["姓名", "subject_name"]

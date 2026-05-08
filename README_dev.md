@@ -9,3 +9,9 @@ python scripts/00_validate_environment.py
 python scripts/01_build_cohort.py --config configs/project.yaml
 python -m pytest tests -q
 ```
+
+Windows ACL 受限目录下可使用显式临时目录并关闭 pytest cache：
+
+```bash
+python -m pytest tests --basetemp=F:\CJZProjectFile\StrokePredictSSL-DLModel\.codex_pytest_tmp -p no:cacheprovider
+```
