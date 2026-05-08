@@ -32,6 +32,7 @@ def test_loads_project_and_paths_config(tmp_path: Path) -> None:
             [
                 "paths_config: paths.yaml",
                 "sheets:",
+                "  summary: 02_统计汇总",
                 "  clinical_overview: 01_患者数据总览",
                 "  clinical_raw: 03_临床量表原始",
                 "  preprocessed_summary: 06_预处理静息态阶段汇总",
@@ -41,6 +42,7 @@ def test_loads_project_and_paths_config(tmp_path: Path) -> None:
                 "  low_fma_threshold: 61",
                 "  low_fma_delta_good: 5",
                 "  near_ceiling_delta_good: 3",
+                "  proportional_good_threshold: 0.70",
                 "privacy:",
                 "  pii_columns:",
                 "    - 姓名",
@@ -60,6 +62,14 @@ def test_loads_project_and_paths_config(tmp_path: Path) -> None:
     assert config.stroke_eeg_root == stroke_root
     assert config.healthy_eeg_root == healthy_root
     assert config.output_dir == tmp_path / "outputs"
+    assert config.sheet("summary") == "02_统计汇总"
     assert config.sheet("clinical_overview") == "01_患者数据总览"
+    assert config.sheet("clinical_raw") == "03_临床量表原始"
+    assert config.sheet("preprocessed_summary") == "06_预处理静息态阶段汇总"
+    assert config.sheet("preprocessed_files") == "07_预处理静息态文件明细"
     assert config.label_setting("fma_full_score") == 66
-    assert "姓名" in config.pii_columns
+    assert config.label_setting("low_fma_threshold") == 61
+    assert config.label_setting("low_fma_delta_good") == 5
+    assert config.label_setting("near_ceiling_delta_good") == 3
+    assert config.label_setting("proportional_good_threshold") == 0.70
+    assert config.pii_columns == ["姓名", "subject_name"]
