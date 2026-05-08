@@ -1,63 +1,63 @@
-# Phase 0+1 Cohort And Labeling Design
+# Phase 0+1 队列与标签设计
 
-## Goal
+## 目标
 
-Build the first reproducible slice of the tACS stroke recovery prediction project: repository hygiene, configuration, environment validation, cohort assembly, de-identified subject IDs, and FMA-UE responder labels.
+完成 tACS 脑卒中恢复预测项目的第一段可复现工作：仓库整理、配置、环境验证、队列构建、去标识化 `subject_id`，以及 FMA-UE 恢复标签。
 
-This phase intentionally does not train models, extract EEG matrices, or run full EEG signal QC. It creates a reliable patient-level cohort and label audit that later phases can trust.
+本阶段不训练模型，不提取 EEG 矩阵，也不做完整 EEG 信号质控。它只交付一个可信的患者级队列和标签审计结果，供后续阶段使用。
 
-## Inputs
+## 输入
 
-Primary structured input:
+主要结构化输入文件：
 
 `F:\CJZProjectFile\StrokePredictSSL-DLModel\current_data_status_overview_data_only.xlsx`
 
-Relevant workbook sheets:
+相关工作表：
 
-- `01_患者数据总览`: patient-level clinical and data availability overview.
-- `03_临床量表原始`: raw clinical scale values and completeness flags.
-- `06_预处理静息态阶段汇总`: preprocessed resting-state EEG summary.
-- `07_预处理静息态文件明细`: preprocessed resting-state EEG file index.
-- `02_统计汇总`: sanity-check counts from the source audit.
+- `01_患者数据总览`：患者级临床信息与数据可用性总览。
+- `03_临床量表原始`：原始临床量表数值和完整性字段。
+- `06_预处理静息态阶段汇总`：预处理后静息态 EEG 汇总。
+- `07_预处理静息态文件明细`：预处理后静息态 EEG 文件索引。
+- `02_统计汇总`：源数据审计中的汇总计数，用于 sanity check。
 
-External EEG roots for later phases:
+后续阶段会使用的外部 EEG 根目录：
 
-- Stroke EEG: `F:\CJZFile\EEG_M1\Patient_tACS_M1_RestingStateEEG_afterProcess`
-- Healthy EEG: `F:\CJZFile\EEG_M1\Health_tACS_M1_RestingStateEEG_afterProcess`
+- 患者 EEG：`F:\CJZFile\EEG_M1\Patient_tACS_M1_RestingStateEEG_afterProcess`
+- 健康 EEG：`F:\CJZFile\EEG_M1\Health_tACS_M1_RestingStateEEG_afterProcess`
 
-These roots are configuration values only in Phase 0+1. Raw `.set` and `.fdt` files are not copied into the repository.
+在 Phase 0+1 中，这些路径只写入配置。原始 `.set` 和 `.fdt` 文件不复制到项目仓库。
 
-## Privacy Boundary
+## 隐私边界
 
-The workbook and EEG folders contain direct identifiers such as names and name-like folder labels. Phase 0+1 treats those fields as private input only.
+工作簿和 EEG 文件夹中包含姓名、类似姓名的文件夹标签等直接身份信息。Phase 0+1 只把这些字段当作私有输入，不写入公开输出。
 
-Committed code and generated public outputs must not contain:
+提交到 Git 的代码和生成的公开输出中不能包含：
 
 - `姓名`
 - `姓名写法`
 - `EEG文件夹`
 - `subject_name`
-- raw file paths that include a person's name
-- medical record numbers, if present in future inputs
+- 包含真实姓名的原始文件路径
+- 未来输入中如果出现病历号，也不能输出
 
-The only stable public identifier is a deterministic de-identified `subject_id`. A private mapping file may be generated only if needed and must be ignored by Git.
+唯一稳定的公开标识符是确定性生成的去标识化 `subject_id`。如确实需要生成私有映射文件，该文件必须被 Git 忽略。
 
-## Repository Structure
+## 仓库结构
 
-Phase 0+1 will create:
+Phase 0+1 会创建以下文件：
 
-- `configs/paths.yaml`: local input and output paths.
-- `configs/project.yaml`: cohort and label settings.
-- `src/stroke_predict/config.py`: config loading and path resolution.
-- `src/stroke_predict/io/excel_status.py`: workbook sheet reading with explicit schemas.
-- `src/stroke_predict/cohort/labels.py`: FMA label rules.
-- `src/stroke_predict/cohort/ids.py`: deterministic de-identified ID creation.
-- `src/stroke_predict/cohort/build.py`: cohort assembly and audit table generation.
-- `scripts/00_validate_environment.py`: environment and path validation.
-- `scripts/01_build_cohort.py`: command-line cohort builder.
-- `tests/`: TDD tests for label rules, PII filtering, config loading, output schemas, and cohort role assignment.
+- `configs/paths.yaml`：本地输入和输出路径。
+- `configs/project.yaml`：队列与标签设置。
+- `src/stroke_predict/config.py`：配置读取和路径解析。
+- `src/stroke_predict/io/excel_status.py`：读取工作簿中的指定工作表，并检查显式 schema。
+- `src/stroke_predict/cohort/labels.py`：FMA 标签规则。
+- `src/stroke_predict/cohort/ids.py`：确定性去标识化 ID 生成。
+- `src/stroke_predict/cohort/build.py`：队列组装和审计表生成。
+- `scripts/00_validate_environment.py`：环境与路径验证脚本。
+- `scripts/01_build_cohort.py`：命令行队列构建脚本。
+- `tests/`：TDD 测试，覆盖标签规则、PII 字段过滤、配置读取、输出 schema 和队列角色分配。
 
-Generated runtime outputs:
+运行时生成的输出：
 
 - `outputs/cohort/cohort_master.csv`
 - `outputs/cohort/label_audit.csv`
@@ -65,18 +65,18 @@ Generated runtime outputs:
 - `outputs/cohort/cohort_summary.json`
 - `outputs/figures/fig_label_distribution.png`
 
-`outputs/` is ignored by Git.
+`outputs/` 已被 Git 忽略。
 
-## Label Rules
+## 标签规则
 
-The primary label follows the PRD ceiling-adjusted clinically meaningful FMA-UE response rule:
+主标签采用 PRD 中的 ceiling-adjusted clinically meaningful FMA-UE response 规则：
 
-- Missing baseline or post FMA: `missing`
-- Baseline FMA equals 66: `ceiling_exclude`
-- Baseline FMA <= 61: `Good` if delta FMA >= 5, else `Poor`
-- Baseline FMA from 62 to 65: `Good` if delta FMA >= `min(3, 66 - baseline_fma)`, else `Poor`
+- 缺少治疗前或治疗后 FMA：`missing`
+- 治疗前 FMA 等于 66：`ceiling_exclude`
+- 治疗前 FMA <= 61：若 delta FMA >= 5，则为 `Good`，否则为 `Poor`
+- 治疗前 FMA 为 62 到 65：若 delta FMA >= `min(3, 66 - baseline_fma)`，则为 `Good`，否则为 `Poor`
 
-Sensitivity fields:
+敏感性标签字段：
 
 - `label_delta5_all`
 - `label_prop70`
@@ -84,7 +84,7 @@ Sensitivity fields:
 - `outcome_delta_fma`
 - `outcome_post_fma`
 
-The audit table records the numeric ingredients behind every label:
+审计表记录每个标签的数值依据：
 
 - `subject_id`
 - `baseline_fma`
@@ -98,64 +98,64 @@ The audit table records the numeric ingredients behind every label:
 - `label_low_baseline_only`
 - `label_reason`
 
-## Role Assignment
+## 角色分配
 
-Phase 0+1 assigns roles from currently available metadata:
+Phase 0+1 基于当前已有元数据分配角色：
 
-- `supervised_main`: stroke patient with complete FMA pre/post, baseline eyes-open EEG, baseline eyes-closed EEG, non-missing Good/Poor primary label, and not ceiling excluded.
-- `ceiling_exclude`: stroke patient with baseline FMA equal to 66.
-- `ssl_only_stroke`: stroke participant with at least one valid preprocessed resting-state EEG record but not eligible for `supervised_main`.
-- `healthy_ssl`: healthy participant with at least one valid preprocessed resting-state EEG record.
-- `excluded_no_eeg`: clinical patient without usable baseline EO/EC metadata in the preprocessed index.
-- `excluded_bad_qc`: reserved for Phase 2 signal-level QC; Phase 0+1 does not mark records bad on signal quality.
+- `supervised_main`：卒中患者，FMA 治疗前/后完整，有 baseline eyes-open EEG 和 baseline eyes-closed EEG，主标签为 `Good` 或 `Poor`，且不是天花板排除病例。
+- `ceiling_exclude`：卒中患者，治疗前 FMA 等于 66。
+- `ssl_only_stroke`：卒中受试者，至少有一条可用的预处理静息态 EEG 记录，但不满足 `supervised_main` 条件。
+- `healthy_ssl`：健康受试者，至少有一条可用的预处理静息态 EEG 记录。
+- `excluded_no_eeg`：临床表中存在，但预处理索引中没有可用 baseline EO/EC 元数据的患者。
+- `excluded_bad_qc`：为 Phase 2 的信号级 EEG 质控预留；Phase 0+1 不根据 EEG 信号质量标记 bad QC。
 
-If multiple roles apply, the exported role field uses the most analysis-relevant role in this priority order:
+如果一个受试者满足多个角色，导出的 `role` 字段按以下优先级选择最适合分析的角色：
 
-`supervised_main`, `ceiling_exclude`, `ssl_only_stroke`, `healthy_ssl`, `excluded_no_eeg`, `excluded_bad_qc`.
+`supervised_main`, `ceiling_exclude`, `ssl_only_stroke`, `healthy_ssl`, `excluded_no_eeg`, `excluded_bad_qc`。
 
-## Data Flow
+## 数据流程
 
-1. Validate that Python can import required packages and that the workbook exists.
-2. Read the relevant workbook sheets with stable column names.
-3. Normalize obvious stage and condition labels already present in the workbook.
-4. Create deterministic de-identified IDs separately for stroke and healthy sources.
-5. Apply FMA primary and sensitivity label rules.
-6. Join clinical rows to preprocessed baseline EEG metadata by source subject key.
-7. Assign cohort roles.
-8. Write de-identified cohort, label audit, distribution JSON, and summary JSON.
-9. Generate a label distribution figure from de-identified data only.
+1. 验证 Python 能导入所需包，并确认工作簿存在。
+2. 读取相关工作表，使用稳定列名。
+3. 标准化工作簿中已经存在的 stage 和 condition 标签。
+4. 分别为卒中和健康来源生成确定性的去标识化 ID。
+5. 应用 FMA 主标签和敏感性标签规则。
+6. 按源数据 subject key 将临床行与预处理 baseline EEG 元数据连接。
+7. 分配队列角色。
+8. 写出匿名队列表、标签审计表、标签分布 JSON 和队列 summary JSON。
+9. 只使用去标识化数据生成标签分布图。
 
-## Error Handling
+## 错误处理
 
-The scripts fail fast with clear messages when:
+以下情况脚本应直接失败，并给出清楚错误信息：
 
-- the workbook path does not exist;
-- a required sheet is missing;
-- a required column is missing;
-- FMA fields cannot be parsed as numeric values where a completeness flag says they are complete;
-- a public output would contain a blocked PII column;
-- generated `subject_id` values are duplicated within a source.
+- 工作簿路径不存在。
+- 必需工作表缺失。
+- 必需列缺失。
+- 完整性字段显示 FMA 完整，但 FMA 数值无法解析为数字。
+- 公开输出中包含被禁止的 PII 字段。
+- 同一来源内生成了重复的 `subject_id`。
 
-Warnings are acceptable when:
+以下情况可以给出 warning：
 
-- optional clinical fields such as MBI, BBT, or MMSE are missing;
-- a patient has clinical data but no matching preprocessed EEG metadata;
-- healthy subjects lack clinical fields, as expected.
+- MBI、BBT、MMSE 等可选临床字段缺失。
+- 某名患者有临床数据，但没有匹配的预处理 EEG 元数据。
+- 健康受试者没有临床字段，这属于预期情况。
 
-## Testing Strategy
+## 测试策略
 
-All production code in this phase is implemented test-first.
+本阶段所有生产代码都按 test-first 实现。
 
-Minimum tests:
+最低测试覆盖：
 
-- Label rule tests for missing values, baseline 66, baseline <= 61 with delta 4/5, baseline 64/65 with the ceiling-adjusted threshold, and proportional recovery labels.
-- ID tests confirming deterministic, unique, source-prefixed de-identified IDs.
-- PII tests confirming public output schemas exclude blocked columns.
-- Config tests confirming paths can be loaded and resolved.
-- Cohort builder tests using small synthetic data frames for `supervised_main`, `ceiling_exclude`, `ssl_only_stroke`, `healthy_ssl`, and `excluded_no_eeg`.
-- Script smoke tests for `00_validate_environment.py` and `01_build_cohort.py` on synthetic fixtures.
+- 标签规则测试：缺失值、baseline 66、baseline <= 61 且 delta 为 4/5、baseline 64/65 的天花板修正规则、proportional recovery 标签。
+- ID 测试：确认去标识化 ID 确定、唯一，并带有来源前缀。
+- PII 测试：确认公开输出 schema 不包含被禁止字段。
+- 配置测试：确认路径可读取和解析。
+- 队列构建测试：用小型 synthetic data frame 覆盖 `supervised_main`、`ceiling_exclude`、`ssl_only_stroke`、`healthy_ssl` 和 `excluded_no_eeg`。
+- 脚本 smoke test：用 synthetic fixture 测试 `00_validate_environment.py` 和 `01_build_cohort.py`。
 
-Acceptance commands:
+验收命令：
 
 ```bash
 python scripts/00_validate_environment.py
@@ -163,23 +163,23 @@ python scripts/01_build_cohort.py --config configs/project.yaml
 pytest tests -q
 ```
 
-## Acceptance Criteria
+## 验收标准
 
-- `current_data_status_overview_data_only.xlsx` is not tracked by Git.
-- Raw EEG files are not tracked by Git.
-- `cohort_master.csv` and `label_audit.csv` contain only de-identified subject IDs.
-- `label_primary` contains only `Good`, `Poor`, `ceiling_exclude`, or `missing`.
-- Baseline FMA 64/65 cases can be labeled Good when they meet the adjusted threshold.
-- Baseline FMA 66 cases do not enter the main binary supervised cohort.
-- The supervised cohort count is derived from data and reported in `cohort_summary.json`.
-- Tests pass before moving to Phase 2.
+- `current_data_status_overview_data_only.xlsx` 不被 Git 跟踪。
+- 原始 EEG 文件不被 Git 跟踪。
+- `cohort_master.csv` 和 `label_audit.csv` 只包含去标识化 `subject_id`。
+- `label_primary` 只允许 `Good`、`Poor`、`ceiling_exclude` 或 `missing`。
+- baseline FMA 为 64/65 的病例在满足修正阈值时可以标为 `Good`。
+- baseline FMA 为 66 的病例不进入主二分类监督队列。
+- `cohort_summary.json` 中报告的监督队列数量来自实际数据。
+- 进入 Phase 2 前，相关测试必须通过。
 
-## Out Of Scope
+## 不在本阶段范围内
 
-- Reading raw EEG signal data.
-- Signal-level EEG QC.
-- PSD, FC, tACS-informed feature extraction.
-- LOPO fold generation.
-- Classical ML, MatrixNet, SSL, interpretability, and manuscript generation.
+- 读取原始 EEG 信号。
+- 信号级 EEG 质控。
+- PSD、FC、tACS-informed 特征提取。
+- LOPO fold 生成。
+- 传统机器学习、MatrixNet、SSL、解释性分析和 manuscript 生成。
 
-Those items begin in later phase-specific specs and plans.
+这些内容会在后续阶段分别写 spec 和 plan。
