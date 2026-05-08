@@ -56,8 +56,7 @@ def build_label_record(
         primary = GOOD_LABEL if delta >= low_fma_delta_good else POOR_LABEL
         reason = "low_baseline_delta_met" if primary == GOOD_LABEL else "low_baseline_delta_not_met"
     else:
-        near_ceiling_start = fma_full_score - near_ceiling_delta_good + 1
-        required_delta = 1.0 if baseline >= near_ceiling_start else near_ceiling_delta_good
+        required_delta = min(near_ceiling_delta_good, fma_full_score - baseline)
         primary = GOOD_LABEL if delta >= required_delta else POOR_LABEL
         reason = (
             "near_ceiling_adjusted_delta_met"
