@@ -43,7 +43,11 @@ def main() -> int:
         pii_columns=config.pii_columns,
         label_settings=label_settings,
     )
-    paths = write_cohort_outputs(tables, output_dir=config.output_dir)
+    paths = write_cohort_outputs(
+        tables,
+        cohort_dir=config.output_subdir("cohort_dir"),
+        figures_dir=config.output_subdir("figures_dir"),
+    )
     print("COHORT_BUILD_OK")
     for key, path in paths.items():
         print(f"{key}={path}")

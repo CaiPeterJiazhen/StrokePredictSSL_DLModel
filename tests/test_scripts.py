@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+from PIL import Image
 
 
 def _write_fixture_workbook(path: Path) -> None:
@@ -89,8 +90,8 @@ def test_build_cohort_script_writes_outputs(tmp_path: Path) -> None:
                 "    - set_path",
                 "    - fdt_path",
                 "outputs:",
-                "  cohort_dir: cohort",
-                "  figures_dir: figures",
+                "  cohort_dir: cohort_custom",
+                "  figures_dir: figures_custom",
             ]
         ),
         encoding="utf-8",
@@ -104,17 +105,27 @@ def test_build_cohort_script_writes_outputs(tmp_path: Path) -> None:
         check=True,
     )
 
-    cohort_dir = output_dir / "cohort"
-    figures_dir = output_dir / "figures"
+    cohort_dir = output_dir / "cohort_custom"
+    figures_dir = output_dir / "figures_custom"
     assert "COHORT_BUILD_OK" in result.stdout
-    assert (cohort_dir / "cohort_master.csv").exists()
-    assert (cohort_dir / "label_audit.csv").exists()
-    assert (cohort_dir / "label_distribution.json").exists()
-    assert (cohort_dir / "cohort_summary.json").exists()
-    assert (figures_dir / "fig_label_distribution.png").exists()
+    cohort_master = cohort_dir / "cohort_master.csv"
+    label_audit = cohort_dir / "label_audit.csv"
+    label_distribution = cohort_dir / "label_distribution.json"
+    cohort_summary = cohort_dir / "cohort_summary.json"
+    label_figure = figures_dir / "fig_label_distribution.png"
+    assert cohort_master.exists()
+    assert label_audit.exists()
+    assert label_distribution.exists()
+    assert cohort_summary.exists()
+    assert label_figure.exists()
 
-    summary = json.loads(
-        (cohort_dir / "cohort_summary.json").read_text(encoding="utf-8")
-    )
+    private_columns = {"姓名", "subject_name", "set_path", "fdt_path", "_source_key"}
+    assert private_columns.isdisjoint(pd.read_csv(cohort_master).columns)
+    assert private_columns.isdisjoint(pd.read_csv(label_audit).columns)
+    assert isinstance(json.loads(label_distribution.read_text(encoding="utf-8")), dict)
+
+    summary = json.loads(cohort_summary.read_text(encoding="utf-8"))
     assert summary["n_supervised_main"] == 1
     assert summary["supervised_label_primary_counts"]["Good"] == 1
+    with Image.open(label_figure) as image:
+        assert image.format == "PNG"

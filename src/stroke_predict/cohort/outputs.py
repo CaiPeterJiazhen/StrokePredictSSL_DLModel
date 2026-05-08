@@ -9,9 +9,18 @@ from PIL import Image, ImageDraw
 from stroke_predict.cohort.build import CohortTables
 
 
-def write_cohort_outputs(tables: CohortTables, *, output_dir: Path) -> dict[str, Path]:
-    cohort_dir = output_dir / "cohort"
-    figures_dir = output_dir / "figures"
+def write_cohort_outputs(
+    tables: CohortTables,
+    *,
+    output_dir: Path | None = None,
+    cohort_dir: Path | None = None,
+    figures_dir: Path | None = None,
+) -> dict[str, Path]:
+    if cohort_dir is None or figures_dir is None:
+        if output_dir is None:
+            raise ValueError("output_dir is required unless cohort_dir and figures_dir are provided")
+        cohort_dir = cohort_dir or output_dir / "cohort"
+        figures_dir = figures_dir or output_dir / "figures"
     cohort_dir.mkdir(parents=True, exist_ok=True)
     figures_dir.mkdir(parents=True, exist_ok=True)
 
