@@ -92,3 +92,12 @@ def test_label_audit_contains_required_fields_and_allowed_labels() -> None:
     }
     assert expected.issubset(set(audit.columns))
     assert set(audit["label_primary"]).issubset({"Good", "Poor", "ceiling_exclude", "missing"})
+
+
+def test_summary_includes_supervised_label_primary_counts() -> None:
+    tables = build_cohort_tables(
+        _status_workbook(),
+        pii_columns=["姓名", "subject_name", "set_path", "fdt_path", "_source_key"],
+    )
+
+    assert tables.cohort_summary["supervised_label_primary_counts"] == {"Good": 1}

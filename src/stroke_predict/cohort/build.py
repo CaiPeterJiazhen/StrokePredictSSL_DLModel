@@ -105,6 +105,8 @@ def build_cohort_tables(
     assert_no_pii_columns(audit, private_columns)
 
     distribution = cohort["label_primary"].value_counts(dropna=False).to_dict()
+    supervised = cohort.loc[cohort["role"] == "supervised_main"]
+    supervised_distribution = supervised["label_primary"].value_counts(dropna=False).to_dict()
     summary = {
         "n_total": int(len(cohort)),
         "n_stroke": int((cohort["source"] == "stroke").sum()),
@@ -112,6 +114,7 @@ def build_cohort_tables(
         "n_supervised_main": int((cohort["role"] == "supervised_main").sum()),
         "role_counts": cohort["role"].value_counts(dropna=False).to_dict(),
         "label_primary_counts": distribution,
+        "supervised_label_primary_counts": supervised_distribution,
     }
     return CohortTables(cohort, audit, distribution, summary)
 
