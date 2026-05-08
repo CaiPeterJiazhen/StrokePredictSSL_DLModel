@@ -24,7 +24,9 @@ data/**
 *.fdt
 
 # Superpowers / worktree isolation
+.worktrees
 .worktrees/
+worktrees
 worktrees/
 
 # Local editor and OS files
