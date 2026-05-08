@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 
+import pandas as pd
 import pytest
 
 from stroke_predict.cohort.labels import build_label_record, parse_optional_float
@@ -63,3 +64,47 @@ def test_parse_optional_float_accepts_numbers_and_blanks() -> None:
     assert parse_optional_float("") is None
     assert parse_optional_float(None) is None
     assert parse_optional_float("not numeric") is None
+
+
+@pytest.mark.parametrize(
+    ("baseline", "post"),
+    [
+        (float("nan"), 45),
+        (40, float("nan")),
+        (pd.NA, 45),
+    ],
+)
+def test_nan_and_pandas_na_are_missing_fma(baseline, post) -> None:
+    record = build_label_record(baseline, post)
+    assert record["label_primary"] == "missing"
+    assert record["label_reason"] == "missing_fma"
+
+
+@pytest.mark.parametrize(
+    ("baseline", "post"),
+    [
+        (70, 70),
+        (-1, 45),
+        (40, 70),
+    ],
+)
+def test_fma_values_outside_valid_range_are_missing(baseline, post) -> None:
+    record = build_label_record(baseline, post)
+    assert record["label_primary"] == "missing"
+    assert record["label_reason"] == "invalid_fma_range"
+
+
+def test_label_primary_values_stay_in_allowed_set() -> None:
+    records = [
+        build_label_record(40, 45),
+        build_label_record(40, 44),
+        build_label_record(66, 66),
+        build_label_record(float("nan"), 45),
+        build_label_record(70, 70),
+    ]
+    assert {record["label_primary"] for record in records} <= {
+        "Good",
+        "Poor",
+        "ceiling_exclude",
+        "missing",
+    }

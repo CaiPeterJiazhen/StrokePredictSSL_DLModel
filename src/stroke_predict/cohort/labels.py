@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 MISSING_LABEL = "missing"
@@ -32,6 +33,21 @@ def build_label_record(
             MISSING_LABEL,
             MISSING_LABEL,
             "missing_fma",
+        )
+    if not _is_valid_fma_score(baseline, fma_full_score) or not _is_valid_fma_score(
+        post, fma_full_score
+    ):
+        return _record(
+            baseline,
+            post,
+            None,
+            None,
+            None,
+            MISSING_LABEL,
+            MISSING_LABEL,
+            MISSING_LABEL,
+            MISSING_LABEL,
+            "invalid_fma_range",
         )
 
     delta = post - baseline
@@ -95,12 +111,21 @@ def build_label_record(
 def parse_optional_float(value: Any) -> float | None:
     if value is None:
         return None
+    if value is not value:
+        return None
     if isinstance(value, str) and not value.strip():
         return None
     try:
-        return float(value)
+        parsed = float(value)
     except (TypeError, ValueError):
         return None
+    if math.isnan(parsed):
+        return None
+    return parsed
+
+
+def _is_valid_fma_score(value: float, fma_full_score: float) -> bool:
+    return 0.0 <= value <= fma_full_score
 
 
 def _record(
