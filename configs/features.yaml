@@ -1,0 +1,58 @@
+project_config: "project.yaml"
+eeg_config: "eeg.yaml"
+psd:
+  method: "welch"
+  freq_min_hz: 0.5
+  freq_max_hz: 45.0
+  freq_resolution_hz: 0.5
+  log_transform: true
+  patient_average: true
+bands:
+  delta: [1, 4]
+  theta: [4, 8]
+  alpha_mu: [8, 13]
+  low_beta: [13, 20]
+  high_beta: [20, 30]
+  low_gamma_optional: [30, 45]
+connectivity:
+  methods: ["coherence", "wpli"]
+  rois:
+    left_motor: ["FC3", "FC1", "C3", "C1", "CP3", "CP1"]
+    right_motor: ["FC4", "FC2", "C4", "C2", "CP4", "CP2"]
+    midline_motor: ["FCz", "Cz", "CPz"]
+    left_frontal: ["F3", "F5", "F7", "FC3", "FC5"]
+    right_frontal: ["F4", "F6", "F8", "FC4", "FC6"]
+    left_parietal: ["P3", "P5", "P7", "CP3", "CP5"]
+    right_parietal: ["P4", "P6", "P8", "CP4", "CP6"]
+    occipital: ["O1", "Oz", "O2", "PO3", "POz", "PO4"]
+lesion_normalization:
+  views: ["native", "lesion_normalized"]
+  normalized_target: "C3"
+channel_pair_map:
+  Fp1: Fp2
+  AF3: AF4
+  F7: F8
+  F5: F6
+  F3: F4
+  F1: F2
+  FT7: FT8
+  FC5: FC6
+  FC3: FC4
+  FC1: FC2
+  T7: T8
+  C5: C6
+  C3: C4
+  C1: C2
+  TP7: TP8
+  CP5: CP6
+  CP3: CP4
+  CP1: CP2
+  P7: P8
+  P5: P6
+  P3: P4
+  P1: P2
+  PO7: PO8
+  PO5: PO6
+  PO3: PO4
+  O1: O2
+
