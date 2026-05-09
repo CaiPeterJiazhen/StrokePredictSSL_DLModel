@@ -1,0 +1,10 @@
+project_config: "project.yaml"
+qc:
+  min_duration_sec_main: 60
+  min_duration_sec_ssl: 30
+  allowed_sampling_rate_hz: 250
+  required_channels: 62
+window:
+  length_sec: 4
+  overlap: 0.5
+  min_valid_windows_per_condition: 10
