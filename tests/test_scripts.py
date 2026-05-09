@@ -129,3 +129,9 @@ def test_build_cohort_script_writes_outputs(tmp_path: Path) -> None:
     assert summary["supervised_label_primary_counts"]["Good"] == 1
     with Image.open(label_figure) as image:
         assert image.format == "PNG"
+
+
+def test_phase4_fold_script_and_config_exist() -> None:
+    root = Path(__file__).resolve().parents[1]
+    assert (root / "configs" / "cv.yaml").exists()
+    assert (root / "scripts" / "07_make_folds.py").exists()

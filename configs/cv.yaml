@@ -1,0 +1,5 @@
+project_config: "project.yaml"
+outer_cv: "leave_one_patient_out"
+inner_cv: "stratified_kfold"
+inner_k: 3
+unit: "subject_id"
