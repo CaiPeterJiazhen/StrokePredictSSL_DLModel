@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 from stroke_predict.cohort.build import build_cohort_tables
 from stroke_predict.io.excel_status import StatusWorkbook
@@ -101,3 +102,16 @@ def test_summary_includes_supervised_label_primary_counts() -> None:
     )
 
     assert tables.cohort_summary["supervised_label_primary_counts"] == {"Good": 1}
+
+
+def test_complete_fma_row_with_malformed_scores_fails_clearly() -> None:
+    status = _status_workbook()
+    status.clinical_overview["治疗前FMA"] = status.clinical_overview["治疗前FMA"].astype(object)
+    status.clinical_overview.loc[0, "治疗前FMA"] = "bad"
+    status.clinical_overview.loc[0, "FMA前后完整"] = True
+
+    with pytest.raises(ValueError, match=r"FMA前后完整.*cannot parse"):
+        build_cohort_tables(
+            status,
+            pii_columns=["姓名", "subject_name", "set_path", "fdt_path", "_source_key"],
+        )

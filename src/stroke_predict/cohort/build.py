@@ -6,7 +6,7 @@ from typing import Any
 import pandas as pd
 
 from stroke_predict.cohort.ids import build_subject_id_map, normalize_source_key
-from stroke_predict.cohort.labels import build_label_record
+from stroke_predict.cohort.labels import build_label_record, parse_optional_float
 from stroke_predict.io.excel_status import StatusWorkbook
 from stroke_predict.privacy import assert_no_pii_columns, drop_pii_columns
 
@@ -47,6 +47,7 @@ def build_cohort_tables(
     clinical_by_key = clinical.drop_duplicates("_source_key").set_index("_source_key", drop=False)
     for key in stroke_keys:
         clinical_row = clinical_by_key.loc[key].to_dict() if key in clinical_by_key.index else {}
+        _validate_complete_fma_row(clinical_row, key)
         label = build_label_record(
             clinical_row.get("治疗前FMA"),
             clinical_row.get("治疗后FMA"),
@@ -146,6 +147,26 @@ def _assign_stroke_role(label_primary: str, flags: dict[str, bool]) -> str:
     if has_any:
         return "ssl_only_stroke"
     return "excluded_no_eeg"
+
+
+def _validate_complete_fma_row(clinical_row: dict[str, Any], subject_key: str) -> None:
+    if not _is_truthy_flag(clinical_row.get("FMA前后完整")):
+        return
+    for field in ("治疗前FMA", "治疗后FMA"):
+        if parse_optional_float(clinical_row.get(field)) is None:
+            raise ValueError(
+                f"FMA前后完整 is truthy for subject {subject_key}, "
+                f"but {field} cannot parse as a numeric FMA score"
+            )
+
+
+def _is_truthy_flag(value: Any) -> bool:
+    if value is None or pd.isna(value):
+        return False
+    if isinstance(value, str):
+        text = value.strip().lower()
+        return text in {"1", "true", "yes", "y", "完整", "是"}
+    return bool(value)
 
 
 def label_number(value: Any) -> float | None:
