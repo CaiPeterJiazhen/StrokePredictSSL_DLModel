@@ -550,7 +550,7 @@ Because Git worktrees do not copy ignored `outputs/`, create a worktree-local ju
 Run:
 
 ```powershell
-New-Item -ItemType Junction -Path outputs -Target F:\CJZProjectFile\StrokePredictSSL-DLModel\outputs
+New-Item -ItemType Junction -Path outputs -Target <main_checkout>\outputs
 ```
 
 Expected: worktree path `outputs/` resolves to the original ignored run outputs.
@@ -664,11 +664,11 @@ Expected: remote main receives the Phase 5 commits.
 Run from the main checkout:
 
 ```bash
-git worktree remove F:\CJZProjectFile\StrokePredictSSL-DLModel\.worktrees\phase-5-ml-baselines
+git worktree remove <main_checkout>\.worktrees\phase-5-ml-baselines
 git worktree prune
 ```
 
-Expected: worktree is removed. Original ignored real data outputs under `F:\CJZProjectFile\StrokePredictSSL-DLModel\outputs` remain intact.
+Expected: worktree is removed. Original ignored real data outputs under `<main_checkout>\outputs` remain intact.
 
 ## Self-Review
 

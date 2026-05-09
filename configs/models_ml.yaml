@@ -1,0 +1,51 @@
+project_config: "project.yaml"
+random_seed: 42
+models:
+  - "M0_majority"
+  - "M1_fma_only"
+  - "M2_clinical_only"
+  - "M3_psd_ml"
+  - "M4_fc_ml"
+  - "M5_tacs_target_ml"
+  - "M6_all_handcrafted_eeg_ml"
+  - "M12_clinical_plus_eeg_ml"
+bootstrap_resamples: 5000
+permutation_resamples: 1000
+permutation_metrics:
+  - "roc_auc"
+max_importance_features: 50
+hyperparameters:
+  M1_fma_only:
+    estimator: "ridge_logistic"
+    c_values: [0.01, 0.1, 1.0]
+    l1_ratios: [0.0]
+  M2_clinical_only:
+    estimator: "elasticnet_logistic"
+    c_values: [0.01, 0.1, 1.0]
+    l1_ratios: [0.0, 0.5]
+  M3_psd_ml:
+    estimator: "ridge_logistic"
+    c_values: [0.01, 0.1, 1.0]
+    l1_ratios: [0.0]
+  M4_fc_ml:
+    estimator: "ridge_logistic"
+    c_values: [0.01, 0.1, 1.0]
+    l1_ratios: [0.0]
+  M5_tacs_target_ml:
+    estimator: "ridge_logistic"
+    c_values: [0.01, 0.1, 1.0]
+    l1_ratios: [0.0]
+  M6_all_handcrafted_eeg_ml:
+    estimator: "elasticnet_logistic"
+    c_values: [0.01, 0.1]
+    l1_ratios: [0.0, 0.5]
+  M12_clinical_plus_eeg_ml:
+    estimator: "elasticnet_logistic"
+    c_values: [0.01, 0.1]
+    l1_ratios: [0.0, 0.5]
+output_paths:
+  predictions: "outputs/predictions/classical_patient_predictions.csv"
+  metrics: "outputs/evaluation/classical_metrics.csv"
+  bootstrap_ci: "outputs/evaluation/classical_bootstrap_ci.csv"
+  permutation: "outputs/evaluation/classical_permutation.csv"
+  feature_importance: "outputs/explain/classical_feature_importance.csv"
