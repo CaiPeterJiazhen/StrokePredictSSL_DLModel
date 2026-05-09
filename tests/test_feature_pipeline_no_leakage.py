@@ -52,6 +52,27 @@ def _spec(c_values: list[float] | None = None) -> ModelSpec:
     )
 
 
+def test_high_dimensional_spec_selects_features_inside_training_pipeline() -> None:
+    features = _features()
+    for index in range(20):
+        features[f"x_{index:02d}"] = features["x"] + (index * 0.01)
+    spec = ModelSpec(
+        model_id="M6b_psd_fc_matrix_flatten_ml",
+        feature_columns=[f"x_{index:02d}" for index in range(20)],
+        feature_groups={f"x_{index:02d}": "psd_matrix_flatten" for index in range(20)},
+        estimator="ridge_logistic",
+        c_values=[0.1],
+        l1_ratios=[0.0],
+        max_importance_features=20,
+        max_selected_features=3,
+    )
+
+    result = train_model_on_outer_fold(spec, features, _registry(), random_seed=23)
+
+    assert len(result.importance) <= 3
+    assert {row["feature_name"] for row in result.importance} <= set(spec.feature_columns)
+
+
 def test_outer_fold_training_excludes_test_subject_from_fit_and_threshold() -> None:
     result = train_model_on_outer_fold(_spec(), _features(), _registry(), random_seed=11)
 

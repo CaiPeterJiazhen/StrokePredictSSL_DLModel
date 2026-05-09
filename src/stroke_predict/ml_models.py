@@ -12,10 +12,12 @@ from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 from sklearn.pipeline import Pipeline
+from sklearn.feature_selection import SelectKBest, VarianceThreshold, f_classif
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 
 from stroke_predict.evaluation import bootstrap_metric_ci, compute_classification_metrics, permutation_test, validate_patient_predictions
 from stroke_predict.features.outputs import assert_public_feature_output
+from stroke_predict.features.summary import build_all_summary_features
 
 
 LABEL_TO_INT = {"Poor": 0, "Good": 1}
@@ -24,10 +26,13 @@ REQUIRED_MODEL_IDS = [
     "M0_majority",
     "M1_fma_only",
     "M2_clinical_only",
-    "M3_psd_ml",
-    "M4_fc_ml",
-    "M5_tacs_target_ml",
-    "M6_all_handcrafted_eeg_ml",
+    "M3a_psd_summary_ml",
+    "M4a_fc_summary_ml",
+    "M5_tacs_target_summary_ml",
+    "M6_all_summary_eeg_ml",
+    "M3b_psd_matrix_flatten_ml",
+    "M4b_fc_matrix_flatten_ml",
+    "M6b_psd_fc_matrix_flatten_ml",
     "M12_clinical_plus_eeg_ml",
 ]
 CLINICAL_NUMERIC_COLUMNS = ["age", "baseline_fma", "baseline_mbi", "mmse"]
@@ -45,6 +50,7 @@ class ModelSpec:
     l1_ratios: list[float]
     categorical_columns: tuple[str, ...] = ()
     max_importance_features: int = 50
+    max_selected_features: int = 500
 
 
 @dataclass(frozen=True)
@@ -122,16 +128,33 @@ def run_classical_ml_baselines(
     config: dict[str, Any],
     *,
     cohort: pd.DataFrame,
-    handcrafted: pd.DataFrame,
-    tacs: pd.DataFrame,
     folds: dict[str, Any],
     registries: list[dict[str, Any]],
+    psd_summary: pd.DataFrame | None = None,
+    fc_summary: pd.DataFrame | None = None,
+    tacs_summary: pd.DataFrame | None = None,
+    reactivity: pd.DataFrame | None = None,
+    all_summary: pd.DataFrame | None = None,
+    psd_matrix_flat: pd.DataFrame | None = None,
+    fc_matrix_flat: pd.DataFrame | None = None,
+    handcrafted: pd.DataFrame | None = None,
+    tacs: pd.DataFrame | None = None,
     psd: pd.DataFrame | None = None,
     fc: pd.DataFrame | None = None,
 ) -> dict[str, str]:
     supervised = cohort.loc[cohort["role"].eq("supervised_main")].copy()
     supervised = supervised.sort_values("subject_id").reset_index(drop=True)
-    feature_tables = build_feature_tables(supervised, handcrafted, tacs, psd=psd, fc=fc)
+    feature_tables = build_feature_tables(
+        supervised,
+        psd_summary=psd_summary,
+        fc_summary=fc_summary,
+        tacs_summary=tacs_summary if tacs_summary is not None else tacs,
+        reactivity=reactivity,
+        all_summary=all_summary,
+        psd_matrix_flat=psd_matrix_flat if psd_matrix_flat is not None else psd,
+        fc_matrix_flat=fc_matrix_flat if fc_matrix_flat is not None else fc,
+        handcrafted=handcrafted,
+    )
     specs = build_model_specs(config, feature_tables)
     registry_by_fold = {int(registry["outer_fold"]): registry for registry in registries}
 
@@ -156,73 +179,73 @@ def run_classical_ml_baselines(
 
 def build_feature_tables(
     supervised: pd.DataFrame,
-    handcrafted: pd.DataFrame,
-    tacs: pd.DataFrame,
     *,
-    psd: pd.DataFrame | None = None,
-    fc: pd.DataFrame | None = None,
+    psd_summary: pd.DataFrame | None = None,
+    fc_summary: pd.DataFrame | None = None,
+    tacs_summary: pd.DataFrame | None = None,
+    reactivity: pd.DataFrame | None = None,
+    all_summary: pd.DataFrame | None = None,
+    psd_matrix_flat: pd.DataFrame | None = None,
+    fc_matrix_flat: pd.DataFrame | None = None,
+    handcrafted: pd.DataFrame | None = None,
 ) -> FeatureTables:
     base = supervised[["subject_id", "label_primary"]].copy()
     clinical_numeric = [column for column in CLINICAL_NUMERIC_COLUMNS if column in supervised.columns]
     clinical_categorical = [column for column in CLINICAL_CATEGORICAL_COLUMNS if column in supervised.columns]
     clinical = base.merge(supervised[["subject_id", *clinical_numeric, *clinical_categorical]], on="subject_id", how="left")
 
-    tacs_numeric = _numeric_feature_columns(tacs)
-    handcrafted_numeric = _numeric_feature_columns(handcrafted)
-    tacs_table = base.merge(tacs[["subject_id", *tacs_numeric]], on="subject_id", how="left")
-    handcrafted_table = base.merge(handcrafted[["subject_id", *handcrafted_numeric]], on="subject_id", how="left")
-
     tables: dict[str, pd.DataFrame] = {
         "M0_majority": base,
         "M1_fma_only": clinical[["subject_id", "label_primary", "baseline_fma"]],
         "M2_clinical_only": clinical,
-        "M5_tacs_target_ml": tacs_table,
     }
     groups: dict[str, dict[str, str]] = {
         "M0_majority": {},
         "M1_fma_only": {"baseline_fma": "clinical"},
         "M2_clinical_only": {column: "clinical" for column in [*clinical_numeric, *clinical_categorical]},
-        "M5_tacs_target_ml": {column: "tacs_target" for column in tacs_numeric},
     }
     categorical: dict[str, tuple[str, ...]] = {
         "M1_fma_only": (),
         "M2_clinical_only": tuple(clinical_categorical),
-        "M5_tacs_target_ml": (),
     }
 
-    if psd is not None:
-        psd_columns = [column for column in psd.columns if column != "subject_id"]
-        psd_table = base.merge(psd, on="subject_id", how="left")
-        tables["M3_psd_ml"] = psd_table
-        groups["M3_psd_ml"] = {column: "psd_matrix" for column in psd_columns}
-        categorical["M3_psd_ml"] = ()
-    if fc is not None:
-        fc_columns = [column for column in fc.columns if column != "subject_id"]
-        fc_table = base.merge(fc, on="subject_id", how="left")
-        tables["M4_fc_ml"] = fc_table
-        groups["M4_fc_ml"] = {column: "fc_roi_matrix" for column in fc_columns}
-        categorical["M4_fc_ml"] = ()
+    if all_summary is None:
+        summary_parts = [table for table in (psd_summary, fc_summary, tacs_summary, reactivity, handcrafted) if table is not None]
+        all_summary = build_all_summary_features(*summary_parts) if summary_parts else None
 
-    eeg_parts = [handcrafted_table]
-    eeg_groups = {column: _eeg_group(column, set(tacs_numeric)) for column in handcrafted_numeric}
-    if psd is not None:
-        eeg_parts.append(psd.drop(columns=["subject_id"]))
-        eeg_groups.update({column: "psd_matrix" for column in psd.columns if column != "subject_id"})
-    if fc is not None:
-        eeg_parts.append(fc.drop(columns=["subject_id"]))
-        eeg_groups.update({column: "fc_roi_matrix" for column in fc.columns if column != "subject_id"})
-    all_eeg = pd.concat(eeg_parts, axis=1)
-    all_eeg = all_eeg.loc[:, ~all_eeg.columns.duplicated()]
-    tables["M6_all_handcrafted_eeg_ml"] = all_eeg
-    groups["M6_all_handcrafted_eeg_ml"] = eeg_groups
-    categorical["M6_all_handcrafted_eeg_ml"] = ()
+    _add_numeric_table(base, tables, groups, categorical, "M3a_psd_summary_ml", psd_summary, "psd_summary")
+    _add_numeric_table(base, tables, groups, categorical, "M4a_fc_summary_ml", fc_summary, "fc_summary")
+    _add_numeric_table(base, tables, groups, categorical, "M5_tacs_target_summary_ml", tacs_summary, "tacs_target_summary")
+    if all_summary is not None:
+        all_columns = _numeric_feature_columns(all_summary)
+        all_table = _table_for_subjects(base, all_summary, all_columns)
+        tables["M6_all_summary_eeg_ml"] = all_table
+        groups["M6_all_summary_eeg_ml"] = {column: _summary_group(column) for column in all_columns}
+        categorical["M6_all_summary_eeg_ml"] = ()
 
-    clinical_plus_eeg = clinical.merge(all_eeg.drop(columns=["label_primary"], errors="ignore"), on="subject_id", how="left")
+    _add_numeric_table(base, tables, groups, categorical, "M3b_psd_matrix_flatten_ml", psd_matrix_flat, "psd_matrix_flatten")
+    _add_numeric_table(base, tables, groups, categorical, "M4b_fc_matrix_flatten_ml", fc_matrix_flat, "fc_matrix_flatten")
+    if psd_matrix_flat is not None and fc_matrix_flat is not None:
+        matrix_flat = _merge_feature_sources(psd_matrix_flat, fc_matrix_flat)
+        matrix_columns = _numeric_feature_columns(matrix_flat)
+        matrix_table = _table_for_subjects(base, matrix_flat, matrix_columns)
+        psd_flat_columns = set(_numeric_feature_columns(psd_matrix_flat))
+        tables["M6b_psd_fc_matrix_flatten_ml"] = matrix_table
+        groups["M6b_psd_fc_matrix_flatten_ml"] = {
+            column: "psd_matrix_flatten" if column in psd_flat_columns else "fc_matrix_flatten"
+            for column in matrix_columns
+        }
+        categorical["M6b_psd_fc_matrix_flatten_ml"] = ()
+
+    if all_summary is None:
+        all_summary = pd.DataFrame({"subject_id": supervised["subject_id"].astype(str)})
+    all_summary_columns = _numeric_feature_columns(all_summary)
+    clinical_plus_eeg = _table_for_subjects(clinical, all_summary, all_summary_columns)
     clinical_plus_eeg = clinical_plus_eeg.loc[:, ~clinical_plus_eeg.columns.duplicated()]
     tables["M12_clinical_plus_eeg_ml"] = clinical_plus_eeg
     groups["M12_clinical_plus_eeg_ml"] = {
         **{column: "clinical" for column in [*clinical_numeric, *clinical_categorical]},
-        **eeg_groups,
+        **{column: _summary_group(column) for column in all_summary_columns},
     }
     categorical["M12_clinical_plus_eeg_ml"] = tuple(clinical_categorical)
 
@@ -245,7 +268,11 @@ def build_model_specs(config: dict[str, Any], feature_tables: FeatureTables) -> 
             continue
         table = feature_tables[model_id]
         feature_columns = [column for column in table.columns if column not in {"subject_id", "label_primary"}]
-        estimator = "elasticnet_logistic" if model_id in {"M2_clinical_only", "M6_all_handcrafted_eeg_ml", "M12_clinical_plus_eeg_ml"} else "ridge_logistic"
+        estimator = (
+            "elasticnet_logistic"
+            if model_id in {"M2_clinical_only", "M6_all_summary_eeg_ml", "M12_clinical_plus_eeg_ml"}
+            else "ridge_logistic"
+        )
         model_hyper = hyper.get(model_id, {})
         specs.append(
             ModelSpec(
@@ -257,6 +284,7 @@ def build_model_specs(config: dict[str, Any], feature_tables: FeatureTables) -> 
                 l1_ratios=[float(value) for value in model_hyper.get("l1_ratios", [0.0])],
                 categorical_columns=feature_tables.categorical.get(model_id, ()),
                 max_importance_features=int(config.get("max_importance_features", 50)),
+                max_selected_features=int(config.get("max_selected_features", 500)),
             )
         )
     ordered_specs = []
@@ -437,15 +465,21 @@ def _pipeline_for_spec(spec: ModelSpec, params: dict[str, float], *, random_seed
     numeric = [column for column in spec.feature_columns if column not in categorical]
     transformers = []
     if numeric:
+        numeric_steps = [
+            ("imputer", SimpleImputer(strategy="median", keep_empty_features=True)),
+            ("scaler", StandardScaler()),
+        ]
+        if len(numeric) > spec.max_selected_features:
+            numeric_steps = [
+                ("imputer", SimpleImputer(strategy="median", keep_empty_features=True)),
+                ("variance", VarianceThreshold()),
+                ("scaler", StandardScaler()),
+                ("selector", SelectKBest(score_func=f_classif, k=spec.max_selected_features)),
+            ]
         transformers.append(
             (
                 "numeric",
-                Pipeline(
-                    [
-                        ("imputer", SimpleImputer(strategy="median", keep_empty_features=True)),
-                        ("scaler", StandardScaler()),
-                    ]
-                ),
+                Pipeline(numeric_steps),
                 numeric,
             )
         )
@@ -475,10 +509,12 @@ def _pipeline_for_spec(spec: ModelSpec, params: dict[str, float], *, random_seed
             random_state=random_seed,
         )
     else:
+        use_dual = len(spec.feature_columns) > 1000
         classifier = LogisticRegression(
             penalty="l2",
             solver="liblinear",
             C=float(params["C"]),
+            dual=use_dual,
             max_iter=1000,
             class_weight="balanced",
             random_state=random_seed,
@@ -602,12 +638,57 @@ def _numeric_feature_columns(frame: pd.DataFrame) -> list[str]:
     ]
 
 
-def _eeg_group(column: str, tacs_columns: set[str]) -> str:
-    if column in tacs_columns or "target" in column or "homologous" in column:
-        return "tacs_target"
-    if "fc" in column.lower():
-        return "fc_roi_matrix"
-    return "handcrafted_summary"
+def _add_numeric_table(
+    base: pd.DataFrame,
+    tables: dict[str, pd.DataFrame],
+    groups: dict[str, dict[str, str]],
+    categorical: dict[str, tuple[str, ...]],
+    model_id: str,
+    source: pd.DataFrame | None,
+    feature_group: str,
+) -> None:
+    if source is None:
+        return
+    columns = _numeric_feature_columns(source)
+    tables[model_id] = _table_for_subjects(base, source, columns)
+    groups[model_id] = {column: feature_group for column in columns}
+    categorical[model_id] = ()
+
+
+def _merge_feature_sources(*sources: pd.DataFrame) -> pd.DataFrame:
+    if not sources:
+        return pd.DataFrame(columns=["subject_id"])
+    subject_ids = sources[0]["subject_id"].astype(str).tolist()
+    frames = [pd.DataFrame({"subject_id": subject_ids})]
+    used = {"subject_id"}
+    for source in sources:
+        indexed = source.assign(subject_id=source["subject_id"].astype(str)).set_index("subject_id", drop=False)
+        columns = [column for column in source.columns if column not in used]
+        if not columns:
+            continue
+        frames.append(indexed.reindex(subject_ids)[columns].reset_index(drop=True))
+        used.update(columns)
+    return pd.concat(frames, axis=1)
+
+
+def _table_for_subjects(base: pd.DataFrame, source: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
+    subject_ids = base["subject_id"].astype(str).tolist()
+    indexed = source.assign(subject_id=source["subject_id"].astype(str)).set_index("subject_id", drop=False)
+    aligned = indexed.reindex(subject_ids)[columns].reset_index(drop=True)
+    return pd.concat([base.reset_index(drop=True), aligned], axis=1)
+
+
+def _summary_group(column: str) -> str:
+    lowered = column.lower()
+    if "ec_minus_eo" in lowered or "ec_div_eo" in lowered:
+        return "eo_ec_reactivity"
+    if "target" in lowered or "homologous" in lowered:
+        return "tacs_target_summary"
+    if "coherence" in lowered or "wpli" in lowered or "__" in column or "fc" in lowered:
+        return "fc_summary"
+    if "power" in lowered or "psd" in lowered:
+        return "psd_summary"
+    return "summary"
 
 
 def _empty_importance_frame() -> pd.DataFrame:

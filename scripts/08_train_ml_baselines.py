@@ -36,17 +36,20 @@ def main() -> int:
     cohort = pd.read_csv(project.output_dir / "cohort" / "cohort_master.csv")
     supervised = cohort.loc[cohort["role"].eq("supervised_main")].sort_values("subject_id").reset_index(drop=True)
     subjects = supervised["subject_id"].astype(str).tolist()
-    handcrafted = pd.read_csv(project.output_dir / "features" / "handcrafted_features.csv")
-    tacs = pd.read_csv(project.output_dir / "features" / "tacs_target_features.csv")
+    psd_summary = pd.read_csv(project.output_dir / "features" / "features_psd_summary.csv")
+    fc_summary = pd.read_csv(project.output_dir / "features" / "features_fc_summary.csv")
+    tacs_summary = pd.read_csv(project.output_dir / "features" / "features_tacs_target_summary.csv")
+    reactivity = pd.read_csv(project.output_dir / "features" / "features_eo_ec_reactivity.csv")
+    all_summary = pd.read_csv(project.output_dir / "features" / "features_all_summary.csv")
     dictionary = pd.read_csv(project.output_dir / "features" / "feature_dictionary.csv")
     matrix_dir = project.output_dir / "features" / "matrices"
-    psd = flatten_psd_matrices(
+    psd_matrix_flat = flatten_psd_matrices(
         subjects,
         np.load(matrix_dir / "psd_eo.npy"),
         np.load(matrix_dir / "psd_ec.npy"),
         dictionary,
     )
-    fc = flatten_fc_matrices(
+    fc_matrix_flat = flatten_fc_matrices(
         subjects,
         np.load(matrix_dir / "fc_roi_eo.npy"),
         np.load(matrix_dir / "fc_roi_ec.npy"),
@@ -59,12 +62,15 @@ def main() -> int:
     outputs = run_classical_ml_baselines(
         config,
         cohort=cohort,
-        handcrafted=handcrafted,
-        tacs=tacs,
         folds=outer_folds,
         registries=registries,
-        psd=psd,
-        fc=fc,
+        psd_summary=psd_summary,
+        fc_summary=fc_summary,
+        tacs_summary=tacs_summary,
+        reactivity=reactivity,
+        all_summary=all_summary,
+        psd_matrix_flat=psd_matrix_flat,
+        fc_matrix_flat=fc_matrix_flat,
     )
     predictions = pd.read_csv(outputs["predictions"])
     print("CLASSICAL_ML_OK")

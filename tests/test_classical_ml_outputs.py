@@ -65,10 +65,13 @@ def test_required_phase5_model_ids_are_configured() -> None:
         "M0_majority",
         "M1_fma_only",
         "M2_clinical_only",
-        "M3_psd_ml",
-        "M4_fc_ml",
-        "M5_tacs_target_ml",
-        "M6_all_handcrafted_eeg_ml",
+        "M3a_psd_summary_ml",
+        "M4a_fc_summary_ml",
+        "M5_tacs_target_summary_ml",
+        "M6_all_summary_eeg_ml",
+        "M3b_psd_matrix_flatten_ml",
+        "M4b_fc_matrix_flatten_ml",
+        "M6b_psd_fc_matrix_flatten_ml",
         "M12_clinical_plus_eeg_ml",
     ]
 
@@ -254,14 +257,36 @@ def _synthetic_registries(subjects: list[str]) -> tuple[dict[str, object], list[
 
 def test_run_classical_ml_baselines_writes_required_outputs(tmp_path: Path) -> None:
     cohort = _synthetic_cohort()
-    handcrafted = cohort[["subject_id", "label_primary"]].assign(
-        eeg_power=[2.0, 0.5, 2.2, 0.4, 2.5, 0.3],
-        native_fc_roi_eo_mean=[0.8, 0.2, 0.7, 0.3, 0.9, 0.1],
+    signal = [2.0, 0.5, 2.2, 0.4, 2.5, 0.3]
+    inverse = [0.2, 0.8, 0.25, 0.7, 0.3, 0.9]
+    psd_summary = cohort[["subject_id"]].assign(psd_alpha_summary=signal)
+    fc_summary = cohort[["subject_id"]].assign(fc_alpha_summary=signal)
+    tacs_summary = cohort[["subject_id"]].assign(tacs_target_alpha_summary=signal)
+    reactivity = cohort[["subject_id"]].assign(eo_ec_reactivity_summary=signal)
+    all_summary = cohort[["subject_id"]].assign(
+        psd_alpha_summary=signal,
+        fc_alpha_summary=signal,
+        tacs_target_alpha_summary=signal,
+        eo_ec_reactivity_summary=signal,
     )
+    psd_flat = cohort[["subject_id"]].assign(psd_flat_bin=signal)
+    fc_flat = cohort[["subject_id"]].assign(fc_flat_bin=inverse)
     folds, registries = _synthetic_registries(cohort["subject_id"].tolist())
     config = {
         "random_seed": 5,
-        "models": ["M0_majority", "M1_fma_only", "M2_clinical_only", "M5_tacs_target_ml"],
+        "models": [
+            "M0_majority",
+            "M1_fma_only",
+            "M2_clinical_only",
+            "M3a_psd_summary_ml",
+            "M4a_fc_summary_ml",
+            "M5_tacs_target_summary_ml",
+            "M6_all_summary_eeg_ml",
+            "M3b_psd_matrix_flatten_ml",
+            "M4b_fc_matrix_flatten_ml",
+            "M6b_psd_fc_matrix_flatten_ml",
+            "M12_clinical_plus_eeg_ml",
+        ],
         "bootstrap_resamples": 10,
         "permutation_resamples": 10,
         "output_paths": {
@@ -276,10 +301,15 @@ def test_run_classical_ml_baselines_writes_required_outputs(tmp_path: Path) -> N
     outputs = run_classical_ml_baselines(
         config,
         cohort=cohort,
-        handcrafted=handcrafted,
-        tacs=handcrafted,
         folds=folds,
         registries=registries,
+        psd_summary=psd_summary,
+        fc_summary=fc_summary,
+        tacs_summary=tacs_summary,
+        reactivity=reactivity,
+        all_summary=all_summary,
+        psd_matrix_flat=psd_flat,
+        fc_matrix_flat=fc_flat,
     )
 
     predictions = pd.read_csv(outputs["predictions"])
@@ -288,7 +318,14 @@ def test_run_classical_ml_baselines_writes_required_outputs(tmp_path: Path) -> N
         "M0_majority",
         "M1_fma_only",
         "M2_clinical_only",
-        "M5_tacs_target_ml",
+        "M3a_psd_summary_ml",
+        "M4a_fc_summary_ml",
+        "M5_tacs_target_summary_ml",
+        "M6_all_summary_eeg_ml",
+        "M3b_psd_matrix_flatten_ml",
+        "M4b_fc_matrix_flatten_ml",
+        "M6b_psd_fc_matrix_flatten_ml",
+        "M12_clinical_plus_eeg_ml",
     }
     assert predictions.groupby("model_id").size().eq(6).all()
     assert Path(outputs["metrics"]).exists()

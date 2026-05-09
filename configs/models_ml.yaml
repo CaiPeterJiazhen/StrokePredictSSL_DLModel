@@ -4,16 +4,20 @@ models:
   - "M0_majority"
   - "M1_fma_only"
   - "M2_clinical_only"
-  - "M3_psd_ml"
-  - "M4_fc_ml"
-  - "M5_tacs_target_ml"
-  - "M6_all_handcrafted_eeg_ml"
+  - "M3a_psd_summary_ml"
+  - "M4a_fc_summary_ml"
+  - "M5_tacs_target_summary_ml"
+  - "M6_all_summary_eeg_ml"
+  - "M3b_psd_matrix_flatten_ml"
+  - "M4b_fc_matrix_flatten_ml"
+  - "M6b_psd_fc_matrix_flatten_ml"
   - "M12_clinical_plus_eeg_ml"
 bootstrap_resamples: 5000
 permutation_resamples: 1000
 permutation_metrics:
   - "roc_auc"
 max_importance_features: 50
+max_selected_features: 500
 hyperparameters:
   M1_fma_only:
     estimator: "ridge_logistic"
@@ -23,22 +27,34 @@ hyperparameters:
     estimator: "elasticnet_logistic"
     c_values: [0.01, 0.1, 1.0]
     l1_ratios: [0.0, 0.5]
-  M3_psd_ml:
+  M3a_psd_summary_ml:
     estimator: "ridge_logistic"
     c_values: [0.01, 0.1, 1.0]
     l1_ratios: [0.0]
-  M4_fc_ml:
+  M4a_fc_summary_ml:
     estimator: "ridge_logistic"
     c_values: [0.01, 0.1, 1.0]
     l1_ratios: [0.0]
-  M5_tacs_target_ml:
+  M5_tacs_target_summary_ml:
     estimator: "ridge_logistic"
     c_values: [0.01, 0.1, 1.0]
     l1_ratios: [0.0]
-  M6_all_handcrafted_eeg_ml:
+  M6_all_summary_eeg_ml:
     estimator: "elasticnet_logistic"
     c_values: [0.01, 0.1]
     l1_ratios: [0.0, 0.5]
+  M3b_psd_matrix_flatten_ml:
+    estimator: "ridge_logistic"
+    c_values: [0.01, 0.1, 1.0]
+    l1_ratios: [0.0]
+  M4b_fc_matrix_flatten_ml:
+    estimator: "ridge_logistic"
+    c_values: [0.01, 0.1, 1.0]
+    l1_ratios: [0.0]
+  M6b_psd_fc_matrix_flatten_ml:
+    estimator: "ridge_logistic"
+    c_values: [0.01, 0.1]
+    l1_ratios: [0.0]
   M12_clinical_plus_eeg_ml:
     estimator: "elasticnet_logistic"
     c_values: [0.01, 0.1]
