@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pytest
 import scipy.io
 
 from stroke_predict.eeg.config import EEGConfig
@@ -47,6 +48,40 @@ def test_reads_eeglab_set_header_without_raw_array(tmp_path: Path) -> None:
     assert header.duration_sec == 2
     assert header.channel_labels == ["C3", "C4"]
     assert header.datfile == "synthetic.fdt"
+
+
+def test_header_reader_requests_only_header_variables(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import scipy.io
+
+    requested: dict[str, object] = {}
+
+    def fake_loadmat(path: Path, **kwargs: object) -> dict[str, object]:
+        requested.update(kwargs)
+        if kwargs.get("variable_names") is None:
+            raise TypeError("buffer is too small for requested array")
+        return {
+            "nbchan": 62,
+            "srate": 250,
+            "pnts": 15000,
+            "trials": 1,
+            "chanlocs": [{"labels": "C3"}, {"labels": "C4"}],
+            "datfile": "x.fdt",
+        }
+
+    monkeypatch.setattr(scipy.io, "loadmat", fake_loadmat)
+
+    header = read_eeglab_set_header(tmp_path / "synthetic.set")
+
+    assert header.n_channels == 62
+    assert requested["variable_names"] == (
+        "nbchan",
+        "srate",
+        "pnts",
+        "trials",
+        "chanlocs",
+        "datfile",
+        "data",
+    )
 
 
 def test_evaluate_qc_rejects_bad_sampling_rate() -> None:

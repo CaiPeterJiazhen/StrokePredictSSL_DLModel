@@ -24,7 +24,12 @@ class EEGHeader:
 def read_eeglab_set_header(path: str | Path) -> EEGHeader:
     import scipy.io
 
-    mat = scipy.io.loadmat(path, simplify_cells=True, verify_compressed_data_integrity=False)
+    mat = scipy.io.loadmat(
+        path,
+        simplify_cells=True,
+        verify_compressed_data_integrity=False,
+        variable_names=("nbchan", "srate", "pnts", "trials", "chanlocs", "datfile", "data"),
+    )
     return EEGHeader(
         n_channels=_optional_int(mat.get("nbchan")),
         sfreq=_optional_float(mat.get("srate")),
