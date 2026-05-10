@@ -88,6 +88,7 @@ class SSLMatrixNetRunConfig:
     permutation_resamples: int = 1000
     random_seed: int = 42
     orientation_calibration: str = "inner_val_auc"
+    mask_ratio: float = 0.25
     device: str = "cpu"
     require_cuda: bool = False
     run_id: str = "phase7"
@@ -977,7 +978,7 @@ def _phase7_report(result: SSLMatrixNetRunResult, config: SSLMatrixNetRunConfig)
             "Outer test patient records are excluded from SSL pretraining pools and supervised fitting by subject_id.",
             "",
             "## SSL Method",
-            f"Masked matrix modeling; mask_ratio={config.run_mode}; ssl_variant={config.ssl_variant}; device={config.device}.",
+            f"Masked matrix modeling; mask_ratio={config.mask_ratio}; ssl_variant={config.ssl_variant}; device={config.device}.",
             "",
             "## Fine-Tuning Results",
             metrics_table,
@@ -1008,6 +1009,7 @@ def _config_snapshot(config: SSLMatrixNetRunConfig) -> str:
             f"max_epochs: {config.max_epochs}",
             f"patience: {config.patience}",
             f"batch_size: {config.batch_size}",
+            f"mask_ratio: {config.mask_ratio}",
             f"device: {config.device}",
             f"require_cuda: {str(config.require_cuda).lower()}",
             "",

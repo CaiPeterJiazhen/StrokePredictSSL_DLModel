@@ -84,6 +84,15 @@ def test_no_duplicate_model_patient_seed_predictions(tmp_path: Path) -> None:
     assert not predictions.duplicated(["model_name", "patient_id", "seed"]).any()
 
 
+def test_phase7_report_records_configured_mask_ratio(tmp_path: Path) -> None:
+    result, config = _tiny_ssl_result(tmp_path)
+    paths = write_ssl_matrixnet_outputs(tmp_path, result, config)
+
+    report_text = Path(paths["report"]).read_text(encoding="utf-8")
+    assert "mask_ratio=0.25" in report_text
+    assert "mask_ratio=fast" not in report_text
+
+
 def _tiny_ssl_result(tmp_path: Path):
     _write_minimal_inputs(tmp_path)
     checkpoint_path = tmp_path / "ssl_matrixnet" / "checkpoints" / "unit" / "stroke_baseline" / "fold_01" / "ssl_encoder.pt"

@@ -61,6 +61,7 @@ def main() -> int:
         permutation_resamples=int(mode.get("permutation_resamples", 1000)),
         random_seed=int(mode.get("random_seed", 42)),
         orientation_calibration=str(mode.get("orientation_calibration", "inner_val_auc")),
+        mask_ratio=float(mode.get("mask_ratio", 0.25)),
         device=device,
         require_cuda=require_cuda,
         run_id=run_id,
