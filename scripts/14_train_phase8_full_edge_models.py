@@ -15,7 +15,15 @@ if str(SRC_ROOT) not in sys.path:
 
 from stroke_predict.config import load_yaml_mapping
 from stroke_predict.phase8_evaluation import bootstrap_phase8_ci, permutation_phase8_test
-from stroke_predict.phase8_features import align_full_edge_features, merge_feature_tables
+from stroke_predict.phase8_features import align_full_edge_features, merge_feature_tables, tag_feature_table
+from stroke_predict.phase8_1_validation import (
+    apply_multiple_comparison_correction,
+    audit_comparison_models,
+    audit_source_mode,
+    build_patient_error_audit,
+    build_threshold_calibration_table,
+    write_phase8_1_validation_outputs,
+)
 from stroke_predict.phase8_models import run_phase8_lopo_models
 from stroke_predict.phase8_reports import write_phase8_model_report
 
@@ -62,12 +70,29 @@ def main() -> int:
 
     (output_dir / "evaluation").mkdir(parents=True, exist_ok=True)
     result.no_leakage_audit.to_csv(output_dir / "evaluation" / "phase8_no_leakage_audit.csv", index=False)
+    fc_audit = _fc_audit(output_dir, args.feature_set)
     write_phase8_model_report(
         result.predictions,
         metrics,
-        _fc_audit(output_dir, args.feature_set),
+        fc_audit,
         output_dir=output_dir,
         label_audit=_label_audit(labels),
+    )
+    correction = apply_multiple_comparison_correction(metrics[["model_id", "permutation_p_value"]])
+    best_model_id = _best_model_id(metrics)
+    best_predictions = result.predictions.loc[result.predictions["model_id"].astype(str).eq(best_model_id)].copy()
+    source_audit = audit_source_mode(fc_audit)
+    duplicate_audit = _comparison_audit(features, result.predictions)
+    write_phase8_1_validation_outputs(
+        output_dir=output_dir,
+        source_audit=source_audit,
+        duplicate_audit=duplicate_audit,
+        correction_table=correction,
+        threshold_calibration=build_threshold_calibration_table(best_predictions),
+        patient_error_audit=build_patient_error_audit(labels, best_predictions),
+        no_leakage_audit=result.no_leakage_audit,
+        best_model_id=best_model_id,
+        real_time_series_reproduced=_real_time_series_reproduced(source_audit, metrics, best_model_id),
     )
 
     print("PHASE8_MODELS_OK")
@@ -97,12 +122,12 @@ def _load_phase8_features(
     base = merge_feature_tables(subject_index, eo, ec)
 
     optional_tables = []
-    for key in ("roi_features", "summary_features"):
+    for key, prefix in (("roi_features", "roi_fc"), ("summary_features", "summary")):
         value = input_paths.get(key)
         if value:
             path = _resolve(config_path, str(value))
             if path.exists():
-                optional_tables.append(pd.read_csv(path))
+                optional_tables.append(tag_feature_table(pd.read_csv(path), prefix))
     return merge_feature_tables(base, *optional_tables)
 
 
@@ -117,6 +142,51 @@ def _attach_uncertainty(metrics: pd.DataFrame, ci: pd.DataFrame, perm: pd.DataFr
     result = result.merge(roc_ci, on="model_id", how="left")
     result = result.merge(roc_perm, on="model_id", how="left")
     return result
+
+
+def _best_model_id(metrics: pd.DataFrame) -> str:
+    if metrics.empty:
+        raise ValueError("Cannot choose best Phase 8 model from empty metrics")
+    for column, ascending in (("roc_auc", False), ("pr_auc", False), ("permutation_p_value", True)):
+        if column in metrics.columns:
+            values = pd.to_numeric(metrics[column], errors="coerce")
+            if values.notna().any():
+                index = values.idxmin() if ascending else values.idxmax()
+                return str(metrics.loc[index, "model_id"])
+    return str(metrics.iloc[0]["model_id"])
+
+
+def _comparison_audit(features: pd.DataFrame, predictions: pd.DataFrame) -> dict[str, object]:
+    models = set(predictions["model_id"].astype(str))
+    if {"M15a_prop_roi_fc_best_ml", "M15b_prop_summary_eeg_best_ml"} <= models:
+        return audit_comparison_models(
+            features=features,
+            predictions=predictions,
+            model_a="M15a_prop_roi_fc_best_ml",
+            model_b="M15b_prop_summary_eeg_best_ml",
+        )
+    return {
+        "model_a": "M15a_prop_roi_fc_best_ml",
+        "model_b": "M15b_prop_summary_eeg_best_ml",
+        "feature_matrices_identical": False,
+        "predictions_identical": False,
+        "explanation": "M15a/M15b duplicate audit was not applicable because both comparison models were not run.",
+    }
+
+
+def _real_time_series_reproduced(source_audit: dict[str, object], metrics: pd.DataFrame, best_model_id: str) -> bool:
+    if not bool(source_audit.get("is_real_time_series_fc", False)):
+        return False
+    row = metrics.loc[metrics["model_id"].astype(str).eq(best_model_id)]
+    if row.empty:
+        return False
+    auc = float(pd.to_numeric(row["roc_auc"], errors="coerce").iloc[0]) if "roc_auc" in row else np.nan
+    p_value = (
+        float(pd.to_numeric(row["permutation_p_value"], errors="coerce").iloc[0])
+        if "permutation_p_value" in row
+        else np.nan
+    )
+    return bool(np.isfinite(auc) and auc >= 0.744 and np.isfinite(p_value) and p_value < 0.05)
 
 
 def _fc_audit(output_dir: Path, feature_set: str) -> dict[str, object]:

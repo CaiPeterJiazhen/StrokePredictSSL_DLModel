@@ -48,3 +48,17 @@ def merge_feature_tables(base: pd.DataFrame, *feature_tables: pd.DataFrame) -> p
             raise ValueError("Feature table must include subject_id")
         merged = merged.merge(table, on="subject_id", how="left")
     return merged
+
+
+def tag_feature_table(table: pd.DataFrame, source_prefix: str) -> pd.DataFrame:
+    if "subject_id" not in table.columns:
+        raise ValueError("Feature table must include subject_id")
+    prefix = str(source_prefix).strip()
+    if not prefix:
+        raise ValueError("source_prefix must not be empty")
+    rename = {
+        column: f"{prefix}__{column}"
+        for column in table.columns
+        if column != "subject_id" and not str(column).startswith(f"{prefix}__")
+    }
+    return table.rename(columns=rename)

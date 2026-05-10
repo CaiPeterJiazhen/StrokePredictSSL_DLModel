@@ -63,6 +63,68 @@ def test_phase8_full_edge_fc_cli_runs_on_toy_matrix_input(tmp_path: Path) -> Non
     assert (tmp_path / "outputs" / "matrices" / "phase8_fc_full_reduced32_eo.npy").exists()
 
 
+def test_phase8_full_edge_fc_cli_requires_real_timeseries_when_requested(tmp_path: Path) -> None:
+    config = _write_toy_phase8_config(tmp_path, include_toy_eeg=False)
+
+    label_result = subprocess.run(
+        [sys.executable, "scripts/12_build_phase8_labels.py", "--config", str(config), "--run-mode", "fast"],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert label_result.returncode == 0, label_result.stderr
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/13_extract_full_edge_fc.py",
+            "--config",
+            str(config),
+            "--run-mode",
+            "fast",
+            "--feature-set",
+            "reduced32",
+            "--require-real-timeseries",
+        ],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "Real time-series full-edge FC requires baseline EO/EC time-series input" in result.stderr
+
+
+def test_phase8_full_edge_fc_cli_runs_on_generic_baseline_timeseries_input(tmp_path: Path) -> None:
+    config = _write_toy_phase8_config(tmp_path, use_baseline_timeseries_keys=True)
+    _run_cli([sys.executable, "scripts/12_build_phase8_labels.py", "--config", str(config), "--run-mode", "fast"])
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/13_extract_full_edge_fc.py",
+            "--config",
+            str(config),
+            "--run-mode",
+            "fast",
+            "--feature-set",
+            "reduced32",
+            "--require-real-timeseries",
+        ],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "source_mode=time_series" in result.stdout
+    audit = pd.read_csv(tmp_path / "outputs" / "features" / "phase8_reduced32_full_edge_audit.csv")
+    assert audit.loc[0, "source_mode"] == "time_series"
+
+
 def test_phase8_model_cli_runs_fast_fold_limit(tmp_path: Path) -> None:
     config = _write_toy_phase8_config(tmp_path)
     _run_cli([sys.executable, "scripts/12_build_phase8_labels.py", "--config", str(config), "--run-mode", "fast"])
@@ -100,6 +162,11 @@ def test_phase8_model_cli_runs_fast_fold_limit(tmp_path: Path) -> None:
     assert "PHASE8_MODELS_OK" in result.stdout
     predictions = pd.read_csv(tmp_path / "outputs" / "predictions" / "phase8_prop_full_edge_patient_predictions.csv")
     assert predictions["outer_fold"].nunique() == 2
+    assert (tmp_path / "outputs" / "reports" / "phase8_1_validation_report.md").exists()
+    assert (tmp_path / "outputs" / "evaluation" / "phase8_1_multiple_comparison_correction.csv").exists()
+    assert (tmp_path / "outputs" / "evaluation" / "phase8_1_threshold_calibration.csv").exists()
+    assert (tmp_path / "outputs" / "evaluation" / "phase8_1_patient_error_audit.csv").exists()
+    assert (tmp_path / "outputs" / "reports" / "phase8_1_no_leakage_report.txt").exists()
 
 
 def test_phase8_model_cli_refuses_unplanned_full62_full_mode(tmp_path: Path) -> None:
@@ -135,6 +202,8 @@ def _write_toy_phase8_config(
     tmp_path: Path,
     *,
     models: list[str] | None = None,
+    include_toy_eeg: bool = True,
+    use_baseline_timeseries_keys: bool = False,
 ) -> Path:
     inputs = tmp_path / "inputs"
     outputs = tmp_path / "outputs"
@@ -150,7 +219,10 @@ def _write_toy_phase8_config(
         }
     )
     cohort.to_csv(inputs / "cohort.csv", index=False)
-    _write_toy_eeg(inputs, subjects)
+    if include_toy_eeg:
+        _write_toy_eeg(inputs, subjects)
+    else:
+        _write_psd_proxy_inputs(inputs, subjects)
     folds = {
         "n_supervised_main": len(subjects),
         "folds": [
@@ -163,19 +235,41 @@ def _write_toy_phase8_config(
         ],
     }
     (inputs / "folds.json").write_text(json.dumps(folds), encoding="utf-8")
-    summary = pd.DataFrame({"subject_id": subjects, "summary_signal": [0, 1, 0, 1, 0, 1]})
+    summary = pd.DataFrame({"subject_id": subjects, "summary_signal": [1, 0, 1, 0, 1, 0]})
     roi = pd.DataFrame({"subject_id": subjects, "roi_fc_signal": [0, 1, 0, 1, 0, 1]})
     summary.to_csv(inputs / "summary_features.csv", index=False)
     roi.to_csv(inputs / "roi_features.csv", index=False)
+    input_paths = {
+        "cohort": str(inputs / "cohort.csv"),
+        "folds": str(inputs / "folds.json"),
+        "summary_features": str(inputs / "summary_features.csv"),
+        "roi_features": str(inputs / "roi_features.csv"),
+    }
+    if include_toy_eeg:
+        input_paths.update(
+            (
+                {
+                    "baseline_timeseries_npz": str(inputs / "toy_eeg.npz"),
+                    "baseline_timeseries_index": str(inputs / "toy_eeg_index.csv"),
+                    "baseline_timeseries_channels": str(inputs / "toy_channels.csv"),
+                }
+                if use_baseline_timeseries_keys
+                else {
+                    "toy_eeg_npz": str(inputs / "toy_eeg.npz"),
+                    "toy_eeg_index": str(inputs / "toy_eeg_index.csv"),
+                }
+            )
+        )
+    else:
+        input_paths.update(
+            {
+                "psd_eo": str(inputs / "psd_eo.npy"),
+                "psd_ec": str(inputs / "psd_ec.npy"),
+                "feature_dictionary": str(inputs / "feature_dictionary.csv"),
+            }
+        )
     config = {
-        "input_paths": {
-            "cohort": str(inputs / "cohort.csv"),
-            "toy_eeg_npz": str(inputs / "toy_eeg.npz"),
-            "toy_eeg_index": str(inputs / "toy_eeg_index.csv"),
-            "folds": str(inputs / "folds.json"),
-            "summary_features": str(inputs / "summary_features.csv"),
-            "roi_features": str(inputs / "roi_features.csv"),
-        },
+        "input_paths": input_paths,
         "output_dir": str(outputs),
         "random_seed": 17,
         "models": models
@@ -247,6 +341,52 @@ def _write_toy_eeg(inputs: Path, subjects: list[str]) -> None:
     np.savez(inputs / "toy_eeg.npz", **arrays)
     pd.DataFrame(rows).to_csv(inputs / "toy_eeg_index.csv", index=False)
     pd.DataFrame({"channel": channels}).to_csv(inputs / "toy_channels.csv", index=False)
+
+
+def _write_psd_proxy_inputs(inputs: Path, subjects: list[str]) -> None:
+    channels = [
+        "Fp1",
+        "Fp2",
+        "F7",
+        "F3",
+        "Fz",
+        "F4",
+        "F8",
+        "FC5",
+        "FC1",
+        "FC2",
+        "FC6",
+        "T7",
+        "C3",
+        "Cz",
+        "C4",
+        "T8",
+        "CP5",
+        "CP1",
+        "CP2",
+        "CP6",
+        "P7",
+        "P3",
+        "Pz",
+        "P4",
+        "P8",
+        "POz",
+        "O1",
+        "Oz",
+        "O2",
+        "AF3",
+        "AF4",
+        "PO3",
+    ]
+    rng = np.random.default_rng(7)
+    np.save(inputs / "psd_eo.npy", rng.normal(size=(len(subjects), 1, len(channels), 12)))
+    np.save(inputs / "psd_ec.npy", rng.normal(size=(len(subjects), 1, len(channels), 12)))
+    pd.DataFrame(
+        {
+            "feature_group": ["psd_matrix"] * len(channels),
+            "channel": channels,
+        }
+    ).to_csv(inputs / "feature_dictionary.csv", index=False)
 
 
 def _write_simple_yaml(path: Path, data: dict[str, object]) -> None:

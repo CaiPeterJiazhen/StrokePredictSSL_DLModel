@@ -28,6 +28,7 @@ def main() -> int:
     parser.add_argument("--config", required=True)
     parser.add_argument("--run-mode", choices=["fast", "full"], default="fast")
     parser.add_argument("--feature-set", choices=["reduced32", "full62"], default="reduced32")
+    parser.add_argument("--require-real-timeseries", action="store_true")
     args = parser.parse_args()
 
     config_path = Path(args.config).resolve()
@@ -35,14 +36,16 @@ def main() -> int:
     input_paths = dict(config.get("input_paths", {}))
     output_dir = _resolve(config_path, str(config.get("output_dir", "outputs")))
     _ensure_dirs(output_dir)
+    if args.require_real_timeseries and not _has_time_series_input(input_paths):
+        raise ValueError("Real time-series full-edge FC requires baseline EO/EC time-series input")
 
     labels = _load_labels(output_dir)
     subjects = labels.loc[labels["phase8_label_status"].eq("analyzable"), "subject_id"].astype(str).tolist()
     if not subjects:
         raise ValueError("Phase 8 FC extraction requires analyzable labels")
 
-    if "toy_eeg_npz" in input_paths:
-        fc_outputs = _extract_from_toy_timeseries(config_path, input_paths, output_dir, subjects, args.run_mode, args.feature_set)
+    if _has_time_series_input(input_paths):
+        fc_outputs = _extract_from_timeseries_npz(config_path, input_paths, output_dir, subjects, args.run_mode, args.feature_set)
     else:
         fc_outputs = _extract_from_psd_artifacts(config_path, input_paths, output_dir, subjects, args.feature_set)
 
@@ -56,7 +59,7 @@ def main() -> int:
     return 0
 
 
-def _extract_from_toy_timeseries(
+def _extract_from_timeseries_npz(
     config_path: Path,
     input_paths: dict[str, object],
     output_dir: Path,
@@ -64,9 +67,14 @@ def _extract_from_toy_timeseries(
     run_mode: str,
     feature_set: str,
 ) -> dict[str, object]:
-    npz_path = _resolve(config_path, str(input_paths["toy_eeg_npz"]))
-    index_path = _resolve(config_path, str(input_paths["toy_eeg_index"]))
-    channel_path = npz_path.with_name("toy_channels.csv")
+    if "toy_eeg_npz" in input_paths:
+        npz_path = _resolve(config_path, str(input_paths["toy_eeg_npz"]))
+        index_path = _resolve(config_path, str(input_paths["toy_eeg_index"]))
+        channel_path = npz_path.with_name("toy_channels.csv")
+    else:
+        npz_path = _resolve(config_path, str(input_paths["baseline_timeseries_npz"]))
+        index_path = _resolve(config_path, str(input_paths["baseline_timeseries_index"]))
+        channel_path = _resolve(config_path, str(input_paths["baseline_timeseries_channels"]))
     arrays = np.load(npz_path)
     index = pd.read_csv(index_path)
     channels = pd.read_csv(channel_path)["channel"].astype(str).tolist()
@@ -236,6 +244,16 @@ def _bands_for_run_mode(run_mode: str) -> dict[str, tuple[float, float]]:
     if run_mode == "fast":
         return {name: PHASE8_BANDS[name] for name in ("theta", "alpha_mu")}
     return PHASE8_BANDS
+
+
+def _has_time_series_input(input_paths: dict[str, object]) -> bool:
+    toy_ready = bool(input_paths.get("toy_eeg_npz") and input_paths.get("toy_eeg_index"))
+    baseline_ready = bool(
+        input_paths.get("baseline_timeseries_npz")
+        and input_paths.get("baseline_timeseries_index")
+        and input_paths.get("baseline_timeseries_channels")
+    )
+    return toy_ready or baseline_ready
 
 
 def _ensure_dirs(output_dir: Path) -> None:

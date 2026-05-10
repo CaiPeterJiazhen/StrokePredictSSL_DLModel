@@ -8,7 +8,7 @@ from stroke_predict.phase8_evaluation import (
     validate_phase8_no_leakage,
     validate_phase8_patient_predictions,
 )
-from stroke_predict.phase8_features import align_full_edge_features
+from stroke_predict.phase8_features import align_full_edge_features, tag_feature_table
 from stroke_predict.phase8_models import Phase8ModelSpec, run_phase8_lopo_models
 
 
@@ -33,6 +33,21 @@ def test_full_edge_fc_alignment_rejects_missing_label_subjects() -> None:
 
     with pytest.raises(ValueError, match="labels"):
         align_full_edge_features(matrix, matrix_subject_index, labels)
+
+
+def test_tag_feature_table_adds_source_prefix_for_real_style_columns() -> None:
+    table = pd.DataFrame(
+        {
+            "subject_id": ["STK-001", "STK-002"],
+            "native_eyes_open_global_alpha_mu_power": [0.1, 0.2],
+        }
+    )
+
+    tagged = tag_feature_table(table, "roi_fc")
+
+    assert "subject_id" in tagged.columns
+    assert "roi_fc__native_eyes_open_global_alpha_mu_power" in tagged.columns
+    assert "native_eyes_open_global_alpha_mu_power" not in tagged.columns
 
 
 def test_phase8_lopo_excludes_outer_test_from_all_fit_steps() -> None:
