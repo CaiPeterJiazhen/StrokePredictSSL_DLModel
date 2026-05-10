@@ -538,7 +538,7 @@ def _phase6_report(result: MatrixNetRunResult, config: MatrixNetRunConfig) -> st
         f"- Permutation resamples: {config.permutation_resamples}",
         "",
         _mode_statement(config),
-        "Full mode must state whether hyperparameters were selected by inner validation or a fixed configuration was used; this implementation records fixed-first configuration if lists contain multiple values.",
+        _hyperparameter_statement(config),
         "",
         "## LOPO No-Leakage Summary",
         "",
@@ -579,6 +579,13 @@ def _mode_statement(config: MatrixNetRunConfig) -> str:
     if config.run_mode == "full":
         return "Full mode includes bootstrap ROC-AUC CI and permutation p-values. Hyperparameters are fixed by configuration unless a later implementation records true inner-validation grid search."
     return "Fast mode is smoke-only: bootstrap CI and permutation p-value may be NaN, and these results are not for scientific interpretation."
+
+
+def _hyperparameter_statement(config: MatrixNetRunConfig) -> str:
+    selection_mode = _selection_mode(config)
+    if selection_mode == "fixed_config":
+        return "Hyperparameters used a fixed configuration; no hyperparameter grid search was performed."
+    return "Hyperparameters used the first value from each configured list; no hyperparameter grid search was performed."
 
 
 def _question_answers(metrics: pd.DataFrame) -> str:
