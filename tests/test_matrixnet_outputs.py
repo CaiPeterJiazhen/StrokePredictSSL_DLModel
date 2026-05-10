@@ -121,6 +121,9 @@ def test_matrixnet_script_fast_mode_with_fold_limit(tmp_path: Path) -> None:
                 "    dropouts: [0.3]",
                 "    embedding_dims: [8]",
                 "    hidden_dims: [16]",
+                "    device: cpu",
+                "    require_cuda: false",
+                "    orientation_calibration: inner_val_auc",
                 "models:",
                 "  fast:",
                 "    - M8a_matrixnet_psd_only",
@@ -139,6 +142,7 @@ def test_matrixnet_script_fast_mode_with_fold_limit(tmp_path: Path) -> None:
             "fast",
             "--fold-limit",
             "2",
+            "--phase6-2-audit",
         ],
         cwd=Path(__file__).resolve().parents[1],
         text=True,
@@ -147,6 +151,8 @@ def test_matrixnet_script_fast_mode_with_fold_limit(tmp_path: Path) -> None:
     )
     assert completed.returncode == 0, completed.stderr
     assert "MATRIXNET_OK" in completed.stdout
+    assert "phase6_2_audit=True" in completed.stdout
+    assert "matrixnet_patient_predictions_phase6_2.csv" in completed.stdout
 
 
 def test_fast_mode_refuses_to_overwrite_full_mode_outputs(tmp_path: Path) -> None:
@@ -238,6 +244,74 @@ def test_full_mode_outputs_are_separate_and_include_inference_answers(tmp_path: 
         assert question in report_text
 
 
+def test_phase6_2_outputs_are_named_and_report_decision_rule(tmp_path: Path) -> None:
+    predictions = _full_mode_prediction_frame()
+    config = MatrixNetRunConfig(
+        run_mode="full",
+        models=sorted(predictions["model_name"].unique().tolist()),
+        seeds=[0, 1, 2, 3, 4],
+        max_epochs=2,
+        patience=1,
+        batch_size=2,
+        learning_rates=[1e-3],
+        weight_decays=[1e-2],
+        dropouts=[0.3],
+        embedding_dims=[8],
+        hidden_dims=[16],
+        bootstrap_resamples=25,
+        permutation_resamples=25,
+        random_seed=123,
+        phase6_2_audit=True,
+    )
+    metrics = compute_matrixnet_metrics(predictions, None, config=config)
+    result = MatrixNetRunResult(
+        predictions=predictions,
+        metrics=metrics,
+        training_log=pd.DataFrame({"model_name": ["M8b_matrixnet_fc_only"], "seed": [0], "outer_fold": [1], "epoch": [1]}),
+        fold_audit=pd.DataFrame(
+            {
+                "model_name": ["M8b_matrixnet_fc_only"],
+                "seed": [0],
+                "outer_fold": [1],
+                "test_excluded_from_train": [True],
+                "test_excluded_from_val": [True],
+            }
+        ),
+    )
+
+    paths = write_matrixnet_outputs(tmp_path, result, config)
+
+    assert Path(paths["predictions"]).name == "matrixnet_patient_predictions_phase6_2.csv"
+    assert Path(paths["metrics"]).name == "matrixnet_metrics_phase6_2.csv"
+    assert (tmp_path / "evaluation" / "seed_wise_metrics_phase6_2.csv").exists()
+    assert (tmp_path / "evaluation" / "patient_averaged_metrics_phase6_2.csv").exists()
+    assert Path(paths["no_leakage_report"]).name == "no_leakage_report_phase6_2.txt"
+    assert Path(paths["report"]).name == "phase6_2_score_direction_audit_report.md"
+
+    written_predictions = pd.read_csv(paths["predictions"])
+    assert {
+        "model_name",
+        "seed",
+        "outer_fold",
+        "patient_id",
+        "true_label",
+        "label_int",
+        "logit",
+        "sigmoid_score",
+        "predicted_score",
+        "predicted_label",
+        "threshold",
+        "threshold_source",
+        "score_orientation",
+        "run_mode",
+    } <= set(written_predictions.columns)
+
+    report_text = Path(paths["report"]).read_text(encoding="utf-8")
+    assert "If label/score direction bug is found, fix it before SSL." in report_text
+    assert "exploratory representation-learning experiment" in report_text
+    assert "Phase 6.2 did not start SSL" in report_text
+
+
 def _full_mode_prediction_frame() -> pd.DataFrame:
     patients = ["S01", "S02", "S03", "S04"]
     labels = {"S01": "Poor", "S02": "Poor", "S03": "Good", "S04": "Good"}
@@ -259,10 +333,14 @@ def _full_mode_prediction_frame() -> pd.DataFrame:
                         "outer_fold": fold,
                         "patient_id": patient,
                         "true_label": labels[patient],
+                        "label_int": 1 if labels[patient] == "Good" else 0,
+                        "logit": 0.0,
+                        "sigmoid_score": jittered,
                         "predicted_score": jittered,
                         "predicted_label": "Good" if jittered >= 0.5 else "Poor",
                         "threshold": 0.5,
                         "threshold_source": "inner_validation_balanced_accuracy",
+                        "score_orientation": "normal",
                         "seed": seed,
                         "run_mode": "full",
                         "input_family": "synthetic",

@@ -19,6 +19,7 @@ def main() -> int:
     parser.add_argument("--config", required=True)
     parser.add_argument("--run-mode", choices=["fast", "full"], default="fast")
     parser.add_argument("--fold-limit", type=int, default=None)
+    parser.add_argument("--phase6-2-audit", action="store_true")
     args = parser.parse_args()
 
     config_path = Path(args.config).resolve()
@@ -42,12 +43,17 @@ def main() -> int:
         bootstrap_resamples=int(mode.get("bootstrap_resamples", 1000)),
         permutation_resamples=int(mode.get("permutation_resamples", 1000)),
         random_seed=int(mode.get("random_seed", 42)),
+        orientation_calibration=str(mode.get("orientation_calibration", "inner_val_auc")),
+        phase6_2_audit=bool(args.phase6_2_audit),
+        device=str(mode.get("device", "cpu")),
+        require_cuda=bool(mode.get("require_cuda", False)),
     )
     inputs = load_matrixnet_inputs(output_dir)
     result = run_matrixnet_lopo(inputs, run_config)
     paths = write_matrixnet_outputs(output_dir, result, run_config)
     print("MATRIXNET_OK")
     print(f"run_mode={args.run_mode}")
+    print(f"phase6_2_audit={bool(args.phase6_2_audit)}")
     print(f"n_predictions={len(result.predictions)}")
     print(f"predictions={paths['predictions']}")
     print(f"metrics={paths['metrics']}")

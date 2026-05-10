@@ -11,6 +11,9 @@ run_modes:
     dropouts: [0.5]
     embedding_dims: [32]
     hidden_dims: [64]
+    device: cpu
+    require_cuda: false
+    orientation_calibration: inner_val_auc
   full:
     seeds: [0, 1, 2, 3, 4]
     max_epochs: 120
@@ -24,6 +27,9 @@ run_modes:
     bootstrap_resamples: 1000
     permutation_resamples: 1000
     random_seed: 42
+    device: cuda
+    require_cuda: true
+    orientation_calibration: inner_val_auc
 models:
   fast:
     - M8a_matrixnet_psd_only

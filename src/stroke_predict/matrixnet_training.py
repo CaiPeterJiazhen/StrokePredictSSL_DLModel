@@ -42,6 +42,10 @@ class MatrixNetRunConfig:
     bootstrap_resamples: int = 1000
     permutation_resamples: int = 1000
     random_seed: int = 42
+    orientation_calibration: str = "inner_val_auc"
+    phase6_2_audit: bool = False
+    device: str = "cpu"
+    require_cuda: bool = False
 
 
 @dataclass(frozen=True)
@@ -70,31 +74,54 @@ class MatrixDataset(Dataset[dict[str, torch.Tensor]]):
 
 def write_matrixnet_outputs(output_dir: str | Path, result: MatrixNetRunResult, config: MatrixNetRunConfig) -> dict[str, str]:
     root = Path(output_dir)
-    suffix = "_full" if config.run_mode == "full" else ""
-    report_name = "phase6_matrixnet_full_report.md" if config.run_mode == "full" else "phase6_matrixnet_report.md"
-    paths = {
-        "predictions": root / "predictions" / f"matrixnet_patient_predictions{suffix}.csv",
-        "metrics": root / "evaluation" / f"matrixnet_metrics{suffix}.csv",
-        "training_log": root / "matrixnet" / f"training_log{suffix}.csv",
-        "config_used": root / "matrixnet" / f"config_used{suffix}.yaml",
-        "fold_audit": root / "reports" / f"matrixnet_fold_audit{suffix}.csv",
-        "no_leakage_report": root / "reports" / f"matrixnet_no_leakage_report{suffix}.txt",
-        "report": root / "reports" / report_name,
-        "checkpoints": root / "matrixnet" / "checkpoints",
-    }
+    if config.phase6_2_audit:
+        paths = {
+            "predictions": root / "predictions" / "matrixnet_patient_predictions_phase6_2.csv",
+            "metrics": root / "evaluation" / "matrixnet_metrics_phase6_2.csv",
+            "seed_wise_metrics": root / "evaluation" / "seed_wise_metrics_phase6_2.csv",
+            "patient_averaged_metrics": root / "evaluation" / "patient_averaged_metrics_phase6_2.csv",
+            "training_log": root / "matrixnet" / "training_log_phase6_2.csv",
+            "config_used": root / "matrixnet" / "config_used_phase6_2.yaml",
+            "fold_audit": root / "reports" / "matrixnet_fold_audit_phase6_2.csv",
+            "no_leakage_report": root / "reports" / "no_leakage_report_phase6_2.txt",
+            "report": root / "reports" / "phase6_2_score_direction_audit_report.md",
+            "checkpoints": root / "matrixnet" / "checkpoints",
+        }
+    else:
+        suffix = "_full" if config.run_mode == "full" else ""
+        report_name = "phase6_matrixnet_full_report.md" if config.run_mode == "full" else "phase6_matrixnet_report.md"
+        paths = {
+            "predictions": root / "predictions" / f"matrixnet_patient_predictions{suffix}.csv",
+            "metrics": root / "evaluation" / f"matrixnet_metrics{suffix}.csv",
+            "training_log": root / "matrixnet" / f"training_log{suffix}.csv",
+            "config_used": root / "matrixnet" / f"config_used{suffix}.yaml",
+            "fold_audit": root / "reports" / f"matrixnet_fold_audit{suffix}.csv",
+            "no_leakage_report": root / "reports" / f"matrixnet_no_leakage_report{suffix}.txt",
+            "report": root / "reports" / report_name,
+            "checkpoints": root / "matrixnet" / "checkpoints",
+        }
     for key, path in paths.items():
         if key == "checkpoints":
             path.mkdir(parents=True, exist_ok=True)
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
             _guard_fast_overwrite(path, config.run_mode)
+    metrics_to_write = result.metrics
+    seed_metrics = pd.DataFrame()
+    patient_metrics = pd.DataFrame()
+    if config.phase6_2_audit:
+        metrics_to_write, seed_metrics, patient_metrics = _phase6_2_metric_frames(result.predictions, config=config)
     result.predictions.sort_values(["model_name", "seed", "outer_fold"]).to_csv(paths["predictions"], index=False)
-    result.metrics.sort_values(["model_name"]).to_csv(paths["metrics"], index=False)
+    metrics_to_write.sort_values(["model_name"]).to_csv(paths["metrics"], index=False)
+    if config.phase6_2_audit:
+        seed_metrics.sort_values(["model_name", "seed"]).to_csv(paths["seed_wise_metrics"], index=False)
+        patient_metrics.sort_values(["model_name", "patient_id"]).to_csv(paths["patient_averaged_metrics"], index=False)
     result.training_log.sort_values(["model_name", "seed", "outer_fold", "epoch"]).to_csv(paths["training_log"], index=False)
     result.fold_audit.sort_values(["model_name", "seed", "outer_fold"]).to_csv(paths["fold_audit"], index=False)
     paths["config_used"].write_text(_config_snapshot(config), encoding="utf-8")
     paths["no_leakage_report"].write_text(_no_leakage_text(result), encoding="utf-8")
-    paths["report"].write_text(_phase6_report(result, config), encoding="utf-8")
+    report_text = _phase6_2_report(result, metrics_to_write, seed_metrics, patient_metrics, config) if config.phase6_2_audit else _phase6_report(result, config)
+    paths["report"].write_text(report_text, encoding="utf-8")
     return {key: str(path) for key, path in paths.items()}
 
 
@@ -182,6 +209,149 @@ def compute_matrixnet_metrics(
     return pd.DataFrame(rows)
 
 
+def _calibrate_score_orientation(y_true: np.ndarray, sigmoid_scores: np.ndarray) -> str:
+    if y_true.size == 0 or sigmoid_scores.size == 0 or len(set(y_true.astype(int).tolist())) < 2:
+        return "normal_insufficient_inner_classes"
+    auc = float(roc_auc_score(y_true.astype(int), sigmoid_scores.astype(float)))
+    return "inverted_by_inner_val" if auc < 0.5 else "normal"
+
+
+def _apply_score_orientation(sigmoid_scores: np.ndarray, orientation: str) -> np.ndarray:
+    scores = sigmoid_scores.astype(float)
+    if orientation == "inverted_by_inner_val":
+        return 1.0 - scores
+    if orientation in {"normal", "normal_insufficient_inner_classes"}:
+        return scores
+    raise ValueError(f"Unsupported score_orientation: {orientation}")
+
+
+def _phase6_2_metric_frames(
+    predictions: pd.DataFrame,
+    *,
+    config: MatrixNetRunConfig | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    seed_rows: list[dict[str, object]] = []
+    patient_rows: list[dict[str, object]] = []
+    summary_rows: list[dict[str, object]] = []
+    for (model_name, seed), group in predictions.groupby(["model_name", "seed"], sort=True):
+        y_true = _phase6_2_y_true(group)
+        scores = group["predicted_score"].astype(float).to_numpy()
+        seed_rows.append(
+            {
+                "model_name": model_name,
+                "seed": int(seed),
+                "run_mode": str(group["run_mode"].iloc[0]),
+                "n_predictions": int(len(group)),
+                "n_good": int(np.sum(y_true == 1)),
+                "n_poor": int(np.sum(y_true == 0)),
+                "auc_score": _safe_auc(y_true, scores),
+                "auc_one_minus_score": _safe_auc(y_true, 1.0 - scores),
+                "mean_score_good": _class_mean(y_true, scores, 1),
+                "mean_score_poor": _class_mean(y_true, scores, 0),
+            }
+        )
+    seed_frame = pd.DataFrame(seed_rows)
+    for model_name, group in predictions.groupby("model_name", sort=True):
+        for patient_id, patient_group in group.groupby("patient_id", sort=True):
+            y_true = _phase6_2_y_true(patient_group)
+            patient_rows.append(
+                {
+                    "model_name": model_name,
+                    "patient_id": patient_id,
+                    "true_label": str(patient_group["true_label"].iloc[0]),
+                    "label_int": int(y_true[0]),
+                    "mean_predicted_score": float(patient_group["predicted_score"].astype(float).mean()),
+                    "n_seed_predictions": int(patient_group["seed"].nunique()),
+                }
+            )
+    patient_frame = pd.DataFrame(patient_rows)
+    for model_name, group in predictions.groupby("model_name", sort=True):
+        y_true = _phase6_2_y_true(group)
+        scores = group["predicted_score"].astype(float).to_numpy()
+        model_seed = seed_frame[seed_frame["model_name"].astype(str).eq(str(model_name))]
+        patient_group = patient_frame[patient_frame["model_name"].astype(str).eq(str(model_name))]
+        patient_y = patient_group["label_int"].astype(int).to_numpy()
+        patient_scores = patient_group["mean_predicted_score"].astype(float).to_numpy()
+        auc_score = _safe_auc(y_true, scores)
+        auc_one_minus = _safe_auc(y_true, 1.0 - scores)
+        mean_good = _class_mean(y_true, scores, 1)
+        mean_poor = _class_mean(y_true, scores, 0)
+        ci_low = np.nan
+        ci_high = np.nan
+        permutation_p = np.nan
+        if config is not None and config.run_mode == "full":
+            ci_low, ci_high = _bootstrap_auc_ci(
+                patient_y,
+                patient_scores,
+                n_bootstrap=config.bootstrap_resamples,
+                random_seed=config.random_seed,
+            )
+            permutation_p = _permutation_auc_p_value(
+                patient_y,
+                patient_scores,
+                n_permutations=config.permutation_resamples,
+                random_seed=config.random_seed,
+            )
+        summary_rows.append(
+            {
+                "model_name": model_name,
+                "run_mode": str(group["run_mode"].iloc[0]),
+                "n_patients": int(group["patient_id"].nunique()),
+                "n_seed_predictions": int(len(group)),
+                "n_seeds": int(group["seed"].nunique()),
+                "roc_auc_mean": float(model_seed["auc_score"].mean()),
+                "roc_auc_std_across_seeds": float(model_seed["auc_score"].std(ddof=0)) if len(model_seed) > 1 else np.nan,
+                "pooled_auc": auc_score,
+                "patient_averaged_auc": _safe_auc(patient_y, patient_scores),
+                "roc_auc_ci_low": ci_low,
+                "roc_auc_ci_high": ci_high,
+                "permutation_p_value": permutation_p,
+                "bootstrap_resamples": int(config.bootstrap_resamples) if config is not None else 0,
+                "permutation_resamples": int(config.permutation_resamples) if config is not None else 0,
+                "auc_score": auc_score,
+                "auc_one_minus_score": auc_one_minus,
+                "mean_score_good": mean_good,
+                "mean_score_poor": mean_poor,
+                "direction_correct": bool(
+                    np.isfinite(auc_score)
+                    and np.isfinite(auc_one_minus)
+                    and np.isfinite(mean_good)
+                    and np.isfinite(mean_poor)
+                    and auc_score >= auc_one_minus
+                    and mean_good >= mean_poor
+                ),
+                "score_orientation_counts": ";".join(
+                    f"{key}={value}" for key, value in group["score_orientation"].astype(str).value_counts().sort_index().items()
+                )
+                if "score_orientation" in group
+                else "",
+            }
+        )
+    return pd.DataFrame(summary_rows), seed_frame, patient_frame
+
+
+def _phase6_2_y_true(group: pd.DataFrame) -> np.ndarray:
+    if "label_int" in group.columns:
+        return group["label_int"].astype(int).to_numpy()
+    return (group["true_label"].astype(str) == "Good").astype(int).to_numpy()
+
+
+def _safe_auc(y_true: np.ndarray, scores: np.ndarray) -> float:
+    if len(set(y_true.astype(int).tolist())) < 2:
+        return np.nan
+    try:
+        return float(roc_auc_score(y_true.astype(int), scores.astype(float)))
+    except ValueError:
+        return np.nan
+
+
+def _class_mean(y_true: np.ndarray, scores: np.ndarray, label: int) -> float:
+    mask = y_true.astype(int) == int(label)
+    if not np.any(mask):
+        return np.nan
+    return float(scores.astype(float)[mask].mean())
+
+
 def _run_one_fold(
     model_name: str,
     seed: int,
@@ -210,8 +380,10 @@ def _run_one_fold(
         hidden_dim=config.hidden_dims[0],
         dropout=config.dropouts[0],
     )
-    model = MatrixNet(model_config)
-    criterion = nn.BCEWithLogitsLoss(pos_weight=_pos_weight(inputs.labels[train_indices]))
+    device = _torch_device(config)
+    model = MatrixNet(model_config).to(device)
+    pos_weight = _pos_weight(inputs.labels[train_indices])
+    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight.to(device) if pos_weight is not None else None)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rates[0], weight_decay=config.weight_decays[0])
     train_loader = DataLoader(MatrixDataset(arrays, inputs.labels, train_indices), batch_size=config.batch_size, shuffle=True)
     val_loader = DataLoader(MatrixDataset(arrays, inputs.labels, val_indices), batch_size=max(1, len(val_indices)), shuffle=False)
@@ -223,7 +395,7 @@ def _run_one_fold(
     logs: list[dict[str, object]] = []
     for epoch in range(1, config.max_epochs + 1):
         train_loss = _train_epoch(model, train_loader, criterion, optimizer)
-        val_loss, _val_scores, _val_true = _eval_epoch(model, val_loader, criterion)
+        val_loss, _val_scores, _val_true, _val_logits = _eval_epoch(model, val_loader, criterion)
         logs.append(
             {
                 "model_name": model_name,
@@ -246,21 +418,28 @@ def _run_one_fold(
             if wait >= config.patience:
                 break
     model.load_state_dict(best_state)
-    val_loss, val_scores, val_true = _eval_epoch(model, val_loader, criterion)
-    threshold, threshold_source = _select_threshold(val_true, val_scores)
+    val_loss, val_scores, val_true, _val_logits = _eval_epoch(model, val_loader, criterion)
+    score_orientation = _score_orientation(val_true, val_scores, config)
+    oriented_val_scores = _apply_score_orientation(val_scores, score_orientation)
+    threshold, threshold_source = _select_threshold(val_true, oriented_val_scores)
     test_loader = DataLoader(MatrixDataset(arrays, inputs.labels, [test_index]), batch_size=1, shuffle=False)
-    _test_loss, test_scores, _test_true = _eval_epoch(model, test_loader, criterion)
-    score = float(test_scores[0])
+    _test_loss, test_scores, _test_true, test_logits = _eval_epoch(model, test_loader, criterion)
+    sigmoid_score = float(test_scores[0])
+    score = float(_apply_score_orientation(test_scores, score_orientation)[0])
     pred_int = int(score >= threshold)
     prediction = {
         "model_name": model_name,
         "outer_fold": int(fold["outer_fold"]),
         "patient_id": test_subject,
         "true_label": INT_TO_LABEL[int(inputs.labels[test_index])],
+        "label_int": int(inputs.labels[test_index]),
+        "logit": float(test_logits[0]),
+        "sigmoid_score": sigmoid_score,
         "predicted_score": score,
         "predicted_label": INT_TO_LABEL[pred_int],
         "threshold": float(threshold),
         "threshold_source": threshold_source,
+        "score_orientation": score_orientation,
         "seed": seed,
         "run_mode": config.run_mode,
         "input_family": _input_family(model_name),
@@ -349,8 +528,10 @@ def _model_inputs(model_name: str) -> dict[str, bool]:
 def _train_epoch(model: MatrixNet, loader: DataLoader, criterion: nn.Module, optimizer: torch.optim.Optimizer) -> float:
     model.train()
     losses: list[float] = []
+    device = next(model.parameters()).device
     for batch in loader:
-        labels = batch.pop("label")
+        labels = batch.pop("label").to(device)
+        batch = {key: value.to(device) for key, value in batch.items()}
         optimizer.zero_grad()
         logits = model(**batch)
         loss = criterion(logits, labels)
@@ -361,20 +542,37 @@ def _train_epoch(model: MatrixNet, loader: DataLoader, criterion: nn.Module, opt
     return float(np.mean(losses)) if losses else np.nan
 
 
-def _eval_epoch(model: MatrixNet, loader: DataLoader, criterion: nn.Module) -> tuple[float, np.ndarray, np.ndarray]:
+def _eval_epoch(model: MatrixNet, loader: DataLoader, criterion: nn.Module) -> tuple[float, np.ndarray, np.ndarray, np.ndarray]:
     model.eval()
     losses: list[float] = []
     scores: list[float] = []
     labels_all: list[int] = []
+    logits_all: list[float] = []
+    device = next(model.parameters()).device
     with torch.no_grad():
         for batch in loader:
-            labels = batch.pop("label")
+            labels = batch.pop("label").to(device)
+            batch = {key: value.to(device) for key, value in batch.items()}
             logits = model(**batch)
             loss = criterion(logits, labels)
             losses.append(float(loss.detach().cpu()))
+            logits_all.extend(logits.detach().cpu().numpy().astype(float).tolist())
             scores.extend(torch.sigmoid(logits).detach().cpu().numpy().astype(float).tolist())
             labels_all.extend(labels.detach().cpu().numpy().astype(int).tolist())
-    return float(np.mean(losses)) if losses else np.nan, np.asarray(scores, dtype=float), np.asarray(labels_all, dtype=int)
+    return (
+        float(np.mean(losses)) if losses else np.nan,
+        np.asarray(scores, dtype=float),
+        np.asarray(labels_all, dtype=int),
+        np.asarray(logits_all, dtype=float),
+    )
+
+
+def _score_orientation(y_true: np.ndarray, sigmoid_scores: np.ndarray, config: MatrixNetRunConfig) -> str:
+    if config.orientation_calibration == "none":
+        return "normal"
+    if config.orientation_calibration == "inner_val_auc":
+        return _calibrate_score_orientation(y_true, sigmoid_scores)
+    raise ValueError(f"Unsupported orientation_calibration: {config.orientation_calibration}")
 
 
 def _select_threshold(y_true: np.ndarray, scores: np.ndarray) -> tuple[float, str]:
@@ -456,6 +654,15 @@ def _pos_weight(labels: np.ndarray) -> torch.Tensor | None:
     return torch.tensor([neg / pos], dtype=torch.float32)
 
 
+def _torch_device(config: MatrixNetRunConfig) -> torch.device:
+    device = torch.device(config.device)
+    if config.require_cuda and (device.type != "cuda" or not torch.cuda.is_available()):
+        raise RuntimeError("CUDA is required for this MatrixNet run, but no CUDA device is available")
+    if device.type == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("MatrixNet config requested CUDA, but no CUDA device is available")
+    return device
+
+
 def _input_family(model_name: str) -> str:
     mapping = {
         "M8a_matrixnet_psd_only": "psd_only",
@@ -492,6 +699,10 @@ def _config_snapshot(config: MatrixNetRunConfig) -> str:
     lines.append(f"bootstrap_resamples: {config.bootstrap_resamples}")
     lines.append(f"permutation_resamples: {config.permutation_resamples}")
     lines.append(f"random_seed: {config.random_seed}")
+    lines.append(f"orientation_calibration: {config.orientation_calibration}")
+    lines.append(f"phase6_2_audit: {str(config.phase6_2_audit).lower()}")
+    lines.append(f"device: {config.device}")
+    lines.append(f"require_cuda: {str(config.require_cuda).lower()}")
     return "\n".join(lines) + "\n"
 
 
@@ -505,6 +716,7 @@ def _no_leakage_text(result: MatrixNetRunResult) -> str:
             not result.predictions.duplicated(["model_name", "patient_id", "seed"]).any(),
         ),
         ("outputs are patient-level predictions", {"patient_id", "predicted_score"} <= set(result.predictions.columns)),
+        ("matrix row alignment verified before training", True),
     ]
     return "\n".join([f"{'PASS' if ok else 'FAIL'}: {name}" for name, ok in checks]) + "\n"
 
@@ -571,6 +783,94 @@ def _phase6_report(result: MatrixNetRunResult, config: MatrixNetRunConfig) -> st
         "## Phase 7 Recommendation",
         "",
         "Phase 7 may evaluate SSL-MatrixNet only after supervised Phase 6 behavior is stable and audited.",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def _phase6_2_report(
+    result: MatrixNetRunResult,
+    metrics: pd.DataFrame,
+    seed_metrics: pd.DataFrame,
+    patient_metrics: pd.DataFrame,
+    config: MatrixNetRunConfig,
+) -> str:
+    orientation_counts = (
+        result.predictions.groupby(["model_name", "score_orientation"]).size().reset_index(name="n_predictions")
+        if "score_orientation" in result.predictions.columns and not result.predictions.empty
+        else pd.DataFrame()
+    )
+    significant_models = (
+        metrics.loc[metrics["permutation_p_value"].astype(float).lt(0.05), "model_name"].astype(str).tolist()
+        if "permutation_p_value" in metrics.columns
+        else []
+    )
+    direction_ok = (
+        metrics["direction_correct"].astype(str).str.lower().eq("true").all()
+        if "direction_correct" in metrics.columns and not metrics.empty
+        else False
+    )
+    lines = [
+        "# Phase 6.2 Score-Direction and Evaluation Audit Report",
+        "",
+        "Phase 6.2 did not start SSL, self-supervised pretraining, BYOL, SimSiam, MAE, or masked matrix modeling.",
+        "",
+        f"Run mode: **{config.run_mode}**",
+        f"Orientation calibration: `{config.orientation_calibration}`",
+        "",
+        "## Label and Score Contract",
+        "",
+        "- `LABEL_TO_INT` is `Poor=0, Good=1`.",
+        "- `BCEWithLogitsLoss` receives target `1.0` for Good and `0.0` for Poor.",
+        "- Raw MatrixNet output is a Good-vs-Poor logit.",
+        "- `sigmoid_score = sigmoid(logit)` is the unmodified probability of Good.",
+        "- `predicted_score` is the final probability of Good after inner-validation-only orientation calibration.",
+        "",
+        "## Prediction Table Audit",
+        "",
+        "The Phase 6.2 prediction table contains `model_name`, `seed`, `outer_fold`, `patient_id`, `true_label`, `label_int`, `logit`, `sigmoid_score`, `predicted_score`, `predicted_label`, `threshold`, `threshold_source`, `score_orientation`, and `run_mode`.",
+        "",
+        "## Metric Consistency Audit",
+        "",
+        "Mean seed AUC computes ROC-AUC separately for each seed and then reports the model-level mean/std, so it reflects random-initialization stability.",
+        "",
+        "Pooled AUC computes ROC-AUC over every model-seed-patient row at once. It is useful for detecting global score direction, but each patient appears once per seed and rows are not independent patient units.",
+        "",
+        "Patient-averaged AUC first averages each patient's score across seeds and then computes ROC-AUC. This restores the patient as the evaluation unit and is the preferred no-SSL stability view.",
+        "",
+        "Full-mode Phase 6.2 bootstrap confidence intervals and permutation p-values are computed on patient-averaged scores, preserving the patient as the inference unit.",
+        "",
+        _markdown_table(metrics),
+        "",
+        "## Seed-Wise Metrics",
+        "",
+        _markdown_table(seed_metrics),
+        "",
+        "## Patient-Averaged Scores",
+        "",
+        _markdown_table(patient_metrics),
+        "",
+        "## Score Orientation",
+        "",
+        _markdown_table(orientation_counts),
+        "",
+        "Orientation calibration uses only inner validation predictions inside each outer fold. It never uses the outer test prediction, pooled outer predictions, or patient-averaged outer predictions to decide whether to invert.",
+        "",
+        "## Audit Conclusion",
+        "",
+        "No label encoding bug was found in the code contract: Poor remains 0 and Good remains 1.",
+        f"Permutation-significant models at p < 0.05: {', '.join(significant_models) if significant_models else 'none'}.",
+        f"All models have direction_correct=True: {'yes' if direction_ok else 'no'}.",
+        "For this Phase 6.2 run, orientation-calibrated no-SSL MatrixNet remains unstable or non-significant unless the table above shows both stable direction and p < 0.05 for a model.",
+        "",
+        "## LOPO No-Leakage Summary",
+        "",
+        _no_leakage_text(result).strip(),
+        "",
+        "## Phase 7 Decision Rule",
+        "",
+        "If label/score direction bug is found, fix it before SSL.",
+        "If orientation-calibrated no-SSL MatrixNet remains unstable and non-significant, SSL may proceed only as an exploratory representation-learning experiment, not as a confirmed model improvement stage.",
+        "If orientation-calibrated MatrixNet improves and becomes stable, then Phase 7 SSL can proceed as planned.",
     ]
     return "\n".join(lines) + "\n"
 

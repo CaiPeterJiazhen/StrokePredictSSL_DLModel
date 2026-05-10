@@ -32,5 +32,16 @@ def test_matrixnet_fast_smoke_produces_finite_predictions(tmp_path: Path) -> Non
     predictions = result.predictions
     assert len(predictions) == 2
     assert predictions["model_name"].eq("M8a_matrixnet_psd_only").all()
+    assert {
+        "label_int",
+        "logit",
+        "sigmoid_score",
+        "score_orientation",
+    } <= set(predictions.columns)
+    assert set(predictions["label_int"].astype(int)) <= {0, 1}
+    assert predictions["sigmoid_score"].between(0, 1).all()
     assert predictions["predicted_score"].between(0, 1).all()
+    assert predictions["score_orientation"].isin(
+        ["normal", "inverted_by_inner_val", "normal_insufficient_inner_classes"]
+    ).all()
     assert np.isfinite(predictions["train_loss_final"]).all()
