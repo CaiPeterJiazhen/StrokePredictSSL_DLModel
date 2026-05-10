@@ -1,0 +1,24 @@
+input_paths:
+  cohort: "../../../outputs/cohort/cohort_master.csv"
+  folds: "../../../outputs/folds/outer_folds.json"
+  psd_eo: "../../../outputs/features/matrices/psd_eo.npy"
+  psd_ec: "../../../outputs/features/matrices/psd_ec.npy"
+  feature_dictionary: "../../../outputs/features/feature_dictionary.csv"
+  summary_features: "../../../outputs/features/features_all_summary.csv"
+  roi_features: "../../../outputs/features/features_fc_summary.csv"
+output_dir: "../outputs"
+random_seed: 42
+models:
+  - "M14a_prop_reduced32_fullfc_ridge_logistic"
+  - "M14b_prop_reduced32_fullfc_elasticnet"
+  - "M14c_prop_reduced32_fullfc_linear_svm"
+  - "M14d_prop_reduced32_fullfc_pls_da"
+  - "M15a_prop_roi_fc_best_ml"
+  - "M15b_prop_summary_eeg_best_ml"
+fast:
+  bootstrap_resamples: 25
+  permutation_resamples: 25
+full:
+  bootstrap_resamples: 1000
+  permutation_resamples: 1000
+m16_full62_full_mode_enabled: false
