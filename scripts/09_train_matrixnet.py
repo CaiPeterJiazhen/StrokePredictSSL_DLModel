@@ -39,6 +39,9 @@ def main() -> int:
         hidden_dims=[int(value) for value in mode["hidden_dims"]],
         fold_limit=args.fold_limit,
         write_outputs=True,
+        bootstrap_resamples=int(mode.get("bootstrap_resamples", 1000)),
+        permutation_resamples=int(mode.get("permutation_resamples", 1000)),
+        random_seed=int(mode.get("random_seed", 42)),
     )
     inputs = load_matrixnet_inputs(output_dir)
     result = run_matrixnet_lopo(inputs, run_config)

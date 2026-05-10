@@ -39,6 +39,9 @@ class MatrixNetRunConfig:
     hidden_dims: list[int]
     fold_limit: int | None = None
     write_outputs: bool = True
+    bootstrap_resamples: int = 1000
+    permutation_resamples: int = 1000
+    random_seed: int = 42
 
 
 @dataclass(frozen=True)
@@ -67,14 +70,16 @@ class MatrixDataset(Dataset[dict[str, torch.Tensor]]):
 
 def write_matrixnet_outputs(output_dir: str | Path, result: MatrixNetRunResult, config: MatrixNetRunConfig) -> dict[str, str]:
     root = Path(output_dir)
+    suffix = "_full" if config.run_mode == "full" else ""
+    report_name = "phase6_matrixnet_full_report.md" if config.run_mode == "full" else "phase6_matrixnet_report.md"
     paths = {
-        "predictions": root / "predictions" / "matrixnet_patient_predictions.csv",
-        "metrics": root / "evaluation" / "matrixnet_metrics.csv",
-        "training_log": root / "matrixnet" / "training_log.csv",
-        "config_used": root / "matrixnet" / "config_used.yaml",
-        "fold_audit": root / "reports" / "matrixnet_fold_audit.csv",
-        "no_leakage_report": root / "reports" / "matrixnet_no_leakage_report.txt",
-        "report": root / "reports" / "phase6_matrixnet_report.md",
+        "predictions": root / "predictions" / f"matrixnet_patient_predictions{suffix}.csv",
+        "metrics": root / "evaluation" / f"matrixnet_metrics{suffix}.csv",
+        "training_log": root / "matrixnet" / f"training_log{suffix}.csv",
+        "config_used": root / "matrixnet" / f"config_used{suffix}.yaml",
+        "fold_audit": root / "reports" / f"matrixnet_fold_audit{suffix}.csv",
+        "no_leakage_report": root / "reports" / f"matrixnet_no_leakage_report{suffix}.txt",
+        "report": root / "reports" / report_name,
         "checkpoints": root / "matrixnet" / "checkpoints",
     }
     for key, path in paths.items():
@@ -110,7 +115,7 @@ def run_matrixnet_lopo(inputs: MatrixNetInputs, config: MatrixNetRunConfig) -> M
                 logs.extend(fold_logs)
                 audits.append(audit)
     predictions = pd.DataFrame(rows)
-    metrics = compute_matrixnet_metrics(predictions, inputs.ml_metrics)
+    metrics = compute_matrixnet_metrics(predictions, inputs.ml_metrics, config=config)
     return MatrixNetRunResult(
         predictions=predictions,
         metrics=metrics,
@@ -119,12 +124,35 @@ def run_matrixnet_lopo(inputs: MatrixNetInputs, config: MatrixNetRunConfig) -> M
     )
 
 
-def compute_matrixnet_metrics(predictions: pd.DataFrame, ml_metrics: pd.DataFrame | None = None) -> pd.DataFrame:
+def compute_matrixnet_metrics(
+    predictions: pd.DataFrame,
+    ml_metrics: pd.DataFrame | None = None,
+    *,
+    config: MatrixNetRunConfig | None = None,
+) -> pd.DataFrame:
     seed_rows = [_seed_metric_row(str(model_name), int(seed), group, ml_metrics) for (model_name, seed), group in predictions.groupby(["model_name", "seed"], sort=True)]
     seed_frame = pd.DataFrame(seed_rows)
+    run_mode = str(predictions["run_mode"].iloc[0]) if not predictions.empty else "unknown"
     rows: list[dict[str, object]] = []
     for model_name, group in seed_frame.groupby("model_name", sort=True):
         first = group.iloc[0]
+        ci_low = np.nan
+        ci_high = np.nan
+        permutation_p = np.nan
+        if run_mode == "full":
+            averaged = _average_seed_predictions(predictions[predictions["model_name"].astype(str).eq(str(model_name))])
+            ci_low, ci_high = _bootstrap_auc_ci(
+                averaged["y_true"].to_numpy(),
+                averaged["score"].to_numpy(),
+                n_bootstrap=config.bootstrap_resamples if config is not None else 1000,
+                random_seed=config.random_seed if config is not None else 42,
+            )
+            permutation_p = _permutation_auc_p_value(
+                averaged["y_true"].to_numpy(),
+                averaged["score"].to_numpy(),
+                n_permutations=config.permutation_resamples if config is not None else 1000,
+                random_seed=config.random_seed if config is not None else 42,
+            )
         rows.append(
             {
                 "model_name": model_name,
@@ -136,16 +164,17 @@ def compute_matrixnet_metrics(predictions: pd.DataFrame, ml_metrics: pd.DataFram
                 "n_seeds": int(group["seed"].nunique()),
                 "roc_auc_mean": float(group["roc_auc"].mean()),
                 "roc_auc_std_across_seeds": float(group["roc_auc"].std(ddof=0)) if len(group) > 1 else np.nan,
-                "roc_auc_ci_low": np.nan,
-                "roc_auc_ci_high": np.nan,
+                "roc_auc_ci_low": ci_low,
+                "roc_auc_ci_high": ci_high,
                 "pr_auc": float(group["pr_auc"].mean()),
                 "balanced_accuracy": float(group["balanced_accuracy"].mean()),
                 "sensitivity": float(group["sensitivity"].mean()),
                 "specificity": float(group["specificity"].mean()),
                 "f1": float(group["f1"].mean()),
                 "brier_score": float(group["brier_score"].mean()),
-                "permutation_p_value": np.nan,
+                "permutation_p_value": permutation_p,
                 "comparison_to_best_ml_auc": float(group["comparison_to_best_ml_auc"].mean()),
+                "comparison_to_best_flattened_ml_auc": float(group["comparison_to_best_flattened_ml_auc"].mean()),
                 "comparison_to_fma_only_auc": float(group["comparison_to_fma_only_auc"].mean()),
                 "comparison_to_clinical_only_auc": float(group["comparison_to_clinical_only_auc"].mean()),
             }
@@ -391,6 +420,7 @@ def _seed_metric_row(model_name: str, seed: int, group: pd.DataFrame, ml_metrics
         "f1": float(f1_score(y_true, pred, zero_division=0)),
         "brier_score": float(brier_score_loss(y_true, scores)),
         "comparison_to_best_ml_auc": _compare_ml(roc_auc, ml_metrics, None),
+        "comparison_to_best_flattened_ml_auc": _compare_flattened_ml(roc_auc, ml_metrics),
         "comparison_to_fma_only_auc": _compare_ml(roc_auc, ml_metrics, "M1_fma_only"),
         "comparison_to_clinical_only_auc": _compare_ml(roc_auc, ml_metrics, "M2_clinical_only"),
     }
@@ -407,6 +437,15 @@ def _compare_ml(auc: float, ml_metrics: pd.DataFrame | None, model_name: str | N
             return np.nan
         baseline = float(rows.iloc[0]["roc_auc"])
     return float(auc - baseline)
+
+
+def _compare_flattened_ml(auc: float, ml_metrics: pd.DataFrame | None) -> float:
+    if ml_metrics is None or np.isnan(auc) or not {"model_name", "roc_auc"} <= set(ml_metrics.columns):
+        return np.nan
+    flattened = ml_metrics[ml_metrics["model_name"].astype(str).isin({"M3b_psd_matrix_flatten_ml", "M4b_fc_matrix_flatten_ml", "M6b_psd_fc_matrix_flatten_ml"})]
+    if flattened.empty:
+        return np.nan
+    return float(auc - float(flattened["roc_auc"].max()))
 
 
 def _pos_weight(labels: np.ndarray) -> torch.Tensor | None:
@@ -450,6 +489,9 @@ def _config_snapshot(config: MatrixNetRunConfig) -> str:
     lines.append("dropouts: [" + ", ".join(map(str, config.dropouts)) + "]")
     lines.append("embedding_dims: [" + ", ".join(map(str, config.embedding_dims)) + "]")
     lines.append("hidden_dims: [" + ", ".join(map(str, config.hidden_dims)) + "]")
+    lines.append(f"bootstrap_resamples: {config.bootstrap_resamples}")
+    lines.append(f"permutation_resamples: {config.permutation_resamples}")
+    lines.append(f"random_seed: {config.random_seed}")
     return "\n".join(lines) + "\n"
 
 
@@ -492,9 +534,10 @@ def _phase6_report(result: MatrixNetRunResult, config: MatrixNetRunConfig) -> st
         f"- Patience: {config.patience}",
         f"- Batch size: {config.batch_size}",
         f"- Selection mode: `{_selection_mode(config)}`",
+        f"- Bootstrap resamples: {config.bootstrap_resamples}",
+        f"- Permutation resamples: {config.permutation_resamples}",
         "",
-        "Fast mode is smoke-only: bootstrap CI and permutation p-value may be NaN, and these results are not for scientific interpretation.",
-        "Full mode must implement bootstrap CI and permutation testing before scientific interpretation.",
+        _mode_statement(config),
         "Full mode must state whether hyperparameters were selected by inner validation or a fixed configuration was used; this implementation records fixed-first configuration if lists contain multiple values.",
         "",
         "## LOPO No-Leakage Summary",
@@ -517,6 +560,10 @@ def _phase6_report(result: MatrixNetRunResult, config: MatrixNetRunConfig) -> st
         "",
         "MatrixNet metrics include differences from the best Phase 5.2 ML ROC-AUC, FMA-only ROC-AUC, and clinical-only ROC-AUC when `ml_metrics_all.csv` is available. Flattened matrix controls from Phase 5.2 remain the direct control comparison.",
         "",
+        "## Required Full-Mode Questions",
+        "",
+        _question_answers(result.metrics),
+        "",
         "## Scientific Caution",
         "",
         "Do not claim EEG efficacy from fast-mode results. The supervised sample size is small, and any scientific interpretation requires full-mode stability, confidence intervals, permutation testing, and leakage checks.",
@@ -526,6 +573,48 @@ def _phase6_report(result: MatrixNetRunResult, config: MatrixNetRunConfig) -> st
         "Phase 7 may evaluate SSL-MatrixNet only after supervised Phase 6 behavior is stable and audited.",
     ]
     return "\n".join(lines) + "\n"
+
+
+def _mode_statement(config: MatrixNetRunConfig) -> str:
+    if config.run_mode == "full":
+        return "Full mode includes bootstrap ROC-AUC CI and permutation p-values. Hyperparameters are fixed by configuration unless a later implementation records true inner-validation grid search."
+    return "Fast mode is smoke-only: bootstrap CI and permutation p-value may be NaN, and these results are not for scientific interpretation."
+
+
+def _question_answers(metrics: pd.DataFrame) -> str:
+    if metrics.empty:
+        return "_No metrics available._"
+    m8b_std = _metric_value(metrics, "M8b_matrixnet_fc_only", "roc_auc_std_across_seeds")
+    m8b_auc = _metric_value(metrics, "M8b_matrixnet_fc_only", "roc_auc_mean")
+    m8b_stable = np.isfinite(m8b_std) and m8b_std <= 0.10
+    best_primary = metrics[metrics["model_name"].isin(PRIMARY_MODELS)].sort_values("roc_auc_mean", ascending=False).head(1)
+    best_primary_auc = float(best_primary.iloc[0]["roc_auc_mean"]) if not best_primary.empty else np.nan
+    best_primary_name = str(best_primary.iloc[0]["model_name"]) if not best_primary.empty else "not available"
+    best_primary_flat_delta = float(best_primary.iloc[0].get("comparison_to_best_flattened_ml_auc", np.nan)) if not best_primary.empty else np.nan
+    m8c_delta = _metric_value(metrics, "M8c_matrixnet_psd_fc", "roc_auc_mean") - m8b_auc
+    tacs_delta = _metric_value(metrics, "M8d_matrixnet_psd_fc_tacs", "roc_auc_mean") - _metric_value(metrics, "M8c_matrixnet_psd_fc", "roc_auc_mean")
+    clinical_delta = _metric_value(metrics, "M12_matrixnet_clinical_eeg", "roc_auc_mean") - best_primary_auc
+    significant = metrics.loc[metrics["permutation_p_value"].lt(0.05), "model_name"].astype(str).tolist()
+    rows = [
+        f"- Is M8b_matrixnet_fc_only stable across seeds? {'Yes' if m8b_stable else 'No'}; ROC-AUC mean={_fmt(m8b_auc)}, std={_fmt(m8b_std)} using std <= 0.10 as the stability rule.",
+        f"- Does MatrixNet outperform flattened-matrix ML controls? {'Yes' if np.isfinite(best_primary_flat_delta) and best_primary_flat_delta > 0 else 'No'}; best primary={best_primary_name}, ROC-AUC={_fmt(best_primary_auc)}, delta vs best flattened ML={_fmt(best_primary_flat_delta)}.",
+        f"- Does PSD+FC improve over FC-only? {'Yes' if np.isfinite(m8c_delta) and m8c_delta > 0 else 'No'}; M8c minus M8b ROC-AUC={_fmt(m8c_delta)}.",
+        f"- Does adding tACS summary improve or hurt? {'Improve' if np.isfinite(tacs_delta) and tacs_delta > 0 else 'Hurt or no improvement'}; M8d minus M8c ROC-AUC={_fmt(tacs_delta)}.",
+        f"- Does clinical+EEG improve over EEG-only? {'Yes' if np.isfinite(clinical_delta) and clinical_delta > 0 else 'No'}; M12 minus best M8 ROC-AUC={_fmt(clinical_delta)}.",
+        f"- Are any results permutation-significant? {'Yes: ' + ', '.join(significant) if significant else 'No models at p < 0.05'}.",
+    ]
+    return "\n".join(rows)
+
+
+def _metric_value(metrics: pd.DataFrame, model_name: str, column: str) -> float:
+    row = metrics[metrics["model_name"].astype(str).eq(model_name)]
+    if row.empty or column not in row.columns:
+        return np.nan
+    return float(row.iloc[0][column])
+
+
+def _fmt(value: float) -> str:
+    return "NA" if not np.isfinite(value) else f"{value:.3f}"
 
 
 def _markdown_table(frame: pd.DataFrame) -> str:
@@ -556,3 +645,49 @@ def _guard_fast_overwrite(path: Path, run_mode: str) -> None:
         text = path.read_text(encoding="utf-8", errors="ignore").lower()
         if "run mode: **full**" in text or "run_mode: full" in text or "run mode: full" in text:
             raise FileExistsError(f"Refusing to overwrite full-mode output with fast-mode output: {path}")
+
+
+def _average_seed_predictions(predictions: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    for patient_id, group in predictions.groupby("patient_id", sort=True):
+        rows.append(
+            {
+                "patient_id": patient_id,
+                "y_true": int(str(group["true_label"].iloc[0]) == "Good"),
+                "score": float(group["predicted_score"].astype(float).mean()),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _bootstrap_auc_ci(y_true: np.ndarray, scores: np.ndarray, *, n_bootstrap: int, random_seed: int) -> tuple[float, float]:
+    if len(set(y_true.tolist())) < 2:
+        return np.nan, np.nan
+    rng = np.random.default_rng(random_seed)
+    values: list[float] = []
+    for _ in range(int(n_bootstrap)):
+        indices = rng.integers(0, len(y_true), len(y_true))
+        sample_y = y_true[indices]
+        if len(set(sample_y.tolist())) < 2:
+            continue
+        values.append(float(roc_auc_score(sample_y, scores[indices])))
+    if not values:
+        return np.nan, np.nan
+    return float(np.percentile(values, 2.5)), float(np.percentile(values, 97.5))
+
+
+def _permutation_auc_p_value(y_true: np.ndarray, scores: np.ndarray, *, n_permutations: int, random_seed: int) -> float:
+    if len(set(y_true.tolist())) < 2:
+        return np.nan
+    observed = float(roc_auc_score(y_true, scores))
+    rng = np.random.default_rng(random_seed)
+    null_values: list[float] = []
+    for _ in range(int(n_permutations)):
+        permuted = rng.permutation(y_true)
+        if len(set(permuted.tolist())) < 2:
+            continue
+        null_values.append(float(roc_auc_score(permuted, scores)))
+    if not null_values:
+        return np.nan
+    null = np.asarray(null_values, dtype=float)
+    return float((np.sum(null >= observed) + 1) / (len(null) + 1))
