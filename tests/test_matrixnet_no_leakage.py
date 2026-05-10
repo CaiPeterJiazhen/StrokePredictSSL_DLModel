@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 
 from stroke_predict.matrixnet_data import ensure_matrix_subject_index, load_matrixnet_inputs, validate_fold_registry
+from stroke_predict.matrixnet_preprocessing import FoldPreprocessor, fit_vector_preprocessor
 
 
 def _write_minimal_inputs(root: Path) -> None:
@@ -131,3 +132,25 @@ def test_validate_fold_registry_rejects_test_subject_in_fit_sets() -> None:
     }
     with pytest.raises(ValueError, match="outer test subject"):
         validate_fold_registry(registry)
+
+
+def test_matrix_scaler_uses_only_outer_training_subjects() -> None:
+    subject_ids = ["S01", "S02", "S03"]
+    matrix = np.asarray([[[1.0, 1.0]], [[3.0, 3.0]], [[100.0, 100.0]]], dtype=np.float32)
+    preprocessor = FoldPreprocessor.fit(subject_ids, train_subjects=["S01", "S02"], matrices={"psd": matrix})
+    transformed = preprocessor.transform_matrix("psd", matrix)
+    assert np.allclose(preprocessor.matrix_stats["psd"].mean, 2.0)
+    assert np.allclose(preprocessor.matrix_stats["psd"].std, 1.0)
+    assert np.allclose(transformed[0], -1.0)
+    assert np.allclose(transformed[1], 1.0)
+    assert np.allclose(transformed[2], 98.0)
+
+
+def test_vector_preprocessor_imputes_and_scales_from_training_rows_only() -> None:
+    frame = pd.DataFrame({"subject_id": ["S01", "S02", "S03"], "a": [1.0, 3.0, None], "b": [10.0, 14.0, 100.0]})
+    processed = fit_vector_preprocessor(frame, subject_ids=["S01", "S02", "S03"], train_subjects=["S01", "S02"])
+    values = processed.transform(frame, ["S01", "S02", "S03"])
+    assert values.shape == (3, 2)
+    assert np.isfinite(values).all()
+    assert np.allclose(processed.medians["a"], 2.0)
+    assert np.allclose(processed.means["b"], 12.0)
