@@ -5,6 +5,7 @@ import subprocess
 import sys
 
 import pandas as pd
+import pytest
 
 from stroke_predict.matrixnet_data import load_matrixnet_inputs
 from stroke_predict.matrixnet_training import MatrixNetRunConfig, run_matrixnet_lopo, write_matrixnet_outputs
@@ -140,3 +141,28 @@ def test_matrixnet_script_fast_mode_with_fold_limit(tmp_path: Path) -> None:
     )
     assert completed.returncode == 0, completed.stderr
     assert "MATRIXNET_OK" in completed.stdout
+
+
+def test_fast_mode_refuses_to_overwrite_full_mode_outputs(tmp_path: Path) -> None:
+    _write_minimal_inputs(tmp_path)
+    (tmp_path / "reports").mkdir(exist_ok=True)
+    (tmp_path / "reports" / "phase6_matrixnet_report.md").write_text("Run mode: **full**\n", encoding="utf-8")
+    inputs = load_matrixnet_inputs(tmp_path)
+    config = MatrixNetRunConfig(
+        run_mode="fast",
+        models=["M8a_matrixnet_psd_only"],
+        seeds=[0],
+        max_epochs=1,
+        patience=1,
+        batch_size=2,
+        learning_rates=[1e-3],
+        weight_decays=[1e-2],
+        dropouts=[0.3],
+        embedding_dims=[8],
+        hidden_dims=[16],
+        fold_limit=1,
+        write_outputs=True,
+    )
+    result = run_matrixnet_lopo(inputs, config)
+    with pytest.raises(FileExistsError, match="Refusing to overwrite full-mode"):
+        write_matrixnet_outputs(tmp_path, result, config)

@@ -82,6 +82,7 @@ def write_matrixnet_outputs(output_dir: str | Path, result: MatrixNetRunResult, 
             path.mkdir(parents=True, exist_ok=True)
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
+            _guard_fast_overwrite(path, config.run_mode)
     result.predictions.sort_values(["model_name", "seed", "outer_fold"]).to_csv(paths["predictions"], index=False)
     result.metrics.sort_values(["model_name"]).to_csv(paths["metrics"], index=False)
     result.training_log.sort_values(["model_name", "seed", "outer_fold", "epoch"]).to_csv(paths["training_log"], index=False)
@@ -539,3 +540,19 @@ def _markdown_table(frame: pd.DataFrame) -> str:
     for _, row in display.iterrows():
         rows.append("| " + " | ".join(str(row[column]) for column in columns) + " |")
     return "\n".join(rows)
+
+
+def _guard_fast_overwrite(path: Path, run_mode: str) -> None:
+    if run_mode != "fast" or not path.exists():
+        return
+    if path.suffix.lower() == ".csv":
+        try:
+            existing = pd.read_csv(path, nrows=20)
+        except Exception:
+            return
+        if "run_mode" in existing.columns and existing["run_mode"].astype(str).str.lower().eq("full").any():
+            raise FileExistsError(f"Refusing to overwrite full-mode output with fast-mode output: {path}")
+    if path.suffix.lower() in {".txt", ".md", ".yaml", ".yml"}:
+        text = path.read_text(encoding="utf-8", errors="ignore").lower()
+        if "run mode: **full**" in text or "run_mode: full" in text or "run mode: full" in text:
+            raise FileExistsError(f"Refusing to overwrite full-mode output with fast-mode output: {path}")
