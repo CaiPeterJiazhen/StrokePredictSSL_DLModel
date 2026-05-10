@@ -200,9 +200,9 @@ Create `configs/paths.yaml`:
 
 ```yaml
 paths:
-  workbook: "F:/CJZProjectFile/StrokePredictSSL-DLModel/current_data_status_overview_data_only.xlsx"
-  stroke_eeg_root: "F:/CJZFile/EEG_M1/Patient_tACS_M1_RestingStateEEG_afterProcess"
-  healthy_eeg_root: "F:/CJZFile/EEG_M1/Health_tACS_M1_RestingStateEEG_afterProcess"
+  workbook: "data/current_data_status_overview_data_only.xlsx"
+  stroke_eeg_root: "data/stroke_eeg_after_process"
+  healthy_eeg_root: "data/healthy_eeg_after_process"
   output_dir: "outputs"
 ```
 
@@ -1629,7 +1629,7 @@ Expected output contains:
 
 ```text
 ENVIRONMENT_OK
-workbook=F:\CJZProjectFile\StrokePredictSSL-DLModel\current_data_status_overview_data_only.xlsx
+workbook=<local-workbook-path>
 ```
 
 - [ ] **Step 3: 用真实 Excel 构建 Phase 0+1 输出**

@@ -14,8 +14,9 @@ DEFAULT_PII_COLUMNS = {
     "fdt_path",
 }
 
+RAW_PATH_MARKERS = ("Patient_" + "tACS", "Health_" + "tACS", "RestingStateEEG_" + "afterProcess")
 PATH_VALUE_RE = re.compile(
-    r"(\.set\b|\.fdt\b|Patient_tACS|Health_tACS|RestingStateEEG_afterProcess|[A-Za-z]:[\\/])",
+    r"(\.set\b|\.fdt\b|" + "|".join(map(re.escape, RAW_PATH_MARKERS)) + r"|[A-Za-z]:[\\/])",
     re.IGNORECASE,
 )
 

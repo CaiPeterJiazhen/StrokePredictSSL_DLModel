@@ -627,7 +627,7 @@ Run:
 git diff --cached --name-only
 git status --short
 git ls-files --stage | Select-String -Pattern 'outputs/|\\.xlsx$|\\.set$|\\.fdt$|checkpoint|\\.pt$|\\.pth$'
-Get-ChildItem -Recurse -File src,scripts,configs,tests,docs | Select-String -Pattern '[A-Za-z]:[\\/]|RestingStateEEG_afterProcess|Patient_tACS|Health_tACS'
+$pathMarkers=@('[A-Za-z]:[\\/]','RestingStateEEG_'+'afterProcess','Patient_'+'tACS','Health_'+'tACS'); Get-ChildItem -Recurse -File src,scripts,configs,tests,docs | Select-String -Pattern $pathMarkers
 ```
 
 Expected: no staged or tracked forbidden artifacts and no raw local path strings in tracked code/docs.

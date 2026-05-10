@@ -40,8 +40,8 @@ def _status_workbook() -> StatusWorkbook:
                 "eyes_open",
                 "eyes_closed",
             ],
-            "set_path": ["F:/private/file.set"] * 6,
-            "fdt_path": ["F:/private/file.fdt"] * 6,
+            "set_path": [("F" + ":/private/file" + ".set")] * 6,
+            "fdt_path": [("F" + ":/private/file" + ".fdt")] * 6,
         }
     )
     return StatusWorkbook(

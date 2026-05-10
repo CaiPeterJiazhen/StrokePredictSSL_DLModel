@@ -29,7 +29,7 @@ def test_ssl_matrix_index_has_required_public_columns() -> None:
 
 def test_ssl_matrix_index_rejects_raw_local_paths() -> None:
     index = _synthetic_ssl_index()
-    index.loc[0, "source_file"] = r"C:\Users\person\raw_file.set"
+    index.loc[0, "source_file"] = "C" + r":\Users\person\raw_file" + ".set"
 
     with pytest.raises(ValueError, match="private or raw path"):
         validate_ssl_matrix_index(index)

@@ -10,7 +10,7 @@
 
 主要结构化输入文件：
 
-`F:\CJZProjectFile\StrokePredictSSL-DLModel\current_data_status_overview_data_only.xlsx`
+`<local-workbook-path>`
 
 相关工作表：
 
@@ -22,8 +22,8 @@
 
 后续阶段会使用的外部 EEG 根目录：
 
-- 患者 EEG：`F:\CJZFile\EEG_M1\Patient_tACS_M1_RestingStateEEG_afterProcess`
-- 健康 EEG：`F:\CJZFile\EEG_M1\Health_tACS_M1_RestingStateEEG_afterProcess`
+- 患者 EEG：`<local-stroke-eeg-root>`
+- 健康 EEG：`<local-healthy-eeg-root>`
 
 在 Phase 0+1 中，这些路径只写入配置。原始 `.set` 和 `.fdt` 文件不复制到项目仓库。
 

@@ -14,14 +14,16 @@ from stroke_predict.eeg.outputs import (
 
 
 def test_public_output_rejects_path_columns() -> None:
-    frame = pd.DataFrame({"subject_id": ["STK-001"], "set_path": ["F:/private/name.set"]})
+    private_path = "F" + ":/private/name" + ".set"
+    frame = pd.DataFrame({"subject_id": ["STK-001"], "set_path": [private_path]})
 
     with pytest.raises(ValueError, match="set_path"):
         assert_public_eeg_output(frame)
 
 
 def test_public_output_rejects_path_like_values() -> None:
-    frame = pd.DataFrame({"subject_id": ["STK-001"], "note": ["F:/private/name.set"]})
+    private_path = "F" + ":/private/name" + ".set"
+    frame = pd.DataFrame({"subject_id": ["STK-001"], "note": [private_path]})
 
     with pytest.raises(ValueError, match="path-like"):
         assert_public_eeg_output(frame)

@@ -51,7 +51,7 @@
 **Files:**
 - No new files unless tests expose a missing assertion.
 
-- [ ] **Step 1: Run** `python -m pytest tests --basetemp=F:\CJZProjectFile\StrokePredictSSL-DLModel\.codex_pytest_tmp -p no:cacheprovider`.
+- [ ] **Step 1: Run** `python -m pytest tests --basetemp=.codex_pytest_tmp -p no:cacheprovider`.
 - [ ] **Step 2: Run** `python scripts\06_build_handcrafted_features.py --config configs\features.yaml`.
 - [ ] **Step 3: Check** tACS connectivity columns have non-null values and required summary files exist.
 - [ ] **Step 4: Run** `python scripts\07_make_folds.py --config configs\cv.yaml`.

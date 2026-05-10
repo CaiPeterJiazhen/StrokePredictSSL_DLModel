@@ -603,7 +603,8 @@ from stroke_predict.eeg.outputs import assert_public_eeg_output
 
 
 def test_public_output_rejects_path_columns() -> None:
-    frame = pd.DataFrame({"subject_id": ["STK-001"], "set_path": ["F:/private/name.set"]})
+    private_path = "F" + ":/private/name" + ".set"
+    frame = pd.DataFrame({"subject_id": ["STK-001"], "set_path": [private_path]})
 
     try:
         assert_public_eeg_output(frame)

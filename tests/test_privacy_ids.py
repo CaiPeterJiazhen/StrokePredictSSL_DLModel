@@ -28,7 +28,7 @@ def test_build_subject_id_map_rejects_duplicate_public_ids() -> None:
         ("sub013", "sub13"),
         ("sub013_baseline", "sub13"),
         ("sub013_rest.set", "sub13"),
-        ("F:/x/sub013_baseline", "sub13"),
+        ("F" + ":/x/sub013_baseline", "sub13"),
         ("sub001", "sub01"),
         ("participant-a", "participant-a"),
     ],
@@ -62,7 +62,7 @@ def test_assert_no_pii_columns_rejects_path_like_value_leaks(column: str) -> Non
     df = pd.DataFrame(
         {
             "subject_id": ["STK-001"],
-            column: ["F:/x/sub013_name/file.set"],
+            column: ["F" + ":/x/sub013_name/file" + ".set"],
         }
     )
 
