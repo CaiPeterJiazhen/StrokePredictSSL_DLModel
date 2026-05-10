@@ -1,0 +1,45 @@
+output_dir: outputs
+primary_label: label_primary
+run_modes:
+  fast:
+    seeds: [0]
+    max_epochs: 12
+    patience: 3
+    batch_size: 4
+    learning_rates: [0.001]
+    weight_decays: [0.01]
+    dropouts: [0.5]
+    embedding_dims: [32]
+    hidden_dims: [64]
+  full:
+    seeds: [0, 1, 2, 3, 4]
+    max_epochs: 200
+    patience: 25
+    batch_size: 4
+    learning_rates: [0.001, 0.0003, 0.0001]
+    weight_decays: [0.01, 0.001, 0.0001]
+    dropouts: [0.3, 0.5]
+    embedding_dims: [32, 64]
+    hidden_dims: [64, 128]
+models:
+  fast:
+    - M8a_matrixnet_psd_only
+    - M8b_matrixnet_fc_only
+    - M8c_matrixnet_psd_fc
+    - M8d_matrixnet_psd_fc_tacs
+    - M12_matrixnet_clinical_eeg
+  full:
+    - M8a_matrixnet_psd_only
+    - M8b_matrixnet_fc_only
+    - M8c_matrixnet_psd_fc
+    - M8d_matrixnet_psd_fc_tacs
+    - M12_matrixnet_clinical_eeg
+preprocessing:
+  psd_transform: none
+  matrix_normalization: zscore
+  vector_imputation: train_median
+  vector_scaling: train_standard
+outputs:
+  predictions: outputs/predictions/matrixnet_patient_predictions.csv
+  metrics: outputs/evaluation/matrixnet_metrics.csv
+  report: outputs/reports/phase6_matrixnet_report.md

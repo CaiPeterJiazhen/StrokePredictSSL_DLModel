@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
+import sys
 
 import pandas as pd
 
@@ -92,3 +94,49 @@ def test_write_matrixnet_outputs_creates_required_files_and_columns(tmp_path: Pa
     assert "Phase 5.2" in report_text
     assert "Do not claim EEG efficacy" in report_text
     assert "M12" in report_text and "secondary" in report_text
+
+
+def test_matrixnet_script_fast_mode_with_fold_limit(tmp_path: Path) -> None:
+    _write_minimal_inputs(tmp_path)
+    config_path = tmp_path / "matrixnet.yaml"
+    config_path.write_text(
+        "\n".join(
+            [
+                f"output_dir: {tmp_path.as_posix()}",
+                "run_modes:",
+                "  fast:",
+                "    seeds: [0]",
+                "    max_epochs: 2",
+                "    patience: 1",
+                "    batch_size: 2",
+                "    learning_rates: [0.001]",
+                "    weight_decays: [0.01]",
+                "    dropouts: [0.3]",
+                "    embedding_dims: [8]",
+                "    hidden_dims: [16]",
+                "models:",
+                "  fast:",
+                "    - M8a_matrixnet_psd_only",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "scripts/09_train_matrixnet.py",
+            "--config",
+            str(config_path),
+            "--run-mode",
+            "fast",
+            "--fold-limit",
+            "2",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "MATRIXNET_OK" in completed.stdout
