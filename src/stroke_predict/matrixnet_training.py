@@ -65,6 +65,33 @@ class MatrixDataset(Dataset[dict[str, torch.Tensor]]):
         return sample
 
 
+def write_matrixnet_outputs(output_dir: str | Path, result: MatrixNetRunResult, config: MatrixNetRunConfig) -> dict[str, str]:
+    root = Path(output_dir)
+    paths = {
+        "predictions": root / "predictions" / "matrixnet_patient_predictions.csv",
+        "metrics": root / "evaluation" / "matrixnet_metrics.csv",
+        "training_log": root / "matrixnet" / "training_log.csv",
+        "config_used": root / "matrixnet" / "config_used.yaml",
+        "fold_audit": root / "reports" / "matrixnet_fold_audit.csv",
+        "no_leakage_report": root / "reports" / "matrixnet_no_leakage_report.txt",
+        "report": root / "reports" / "phase6_matrixnet_report.md",
+        "checkpoints": root / "matrixnet" / "checkpoints",
+    }
+    for key, path in paths.items():
+        if key == "checkpoints":
+            path.mkdir(parents=True, exist_ok=True)
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+    result.predictions.sort_values(["model_name", "seed", "outer_fold"]).to_csv(paths["predictions"], index=False)
+    result.metrics.sort_values(["model_name"]).to_csv(paths["metrics"], index=False)
+    result.training_log.sort_values(["model_name", "seed", "outer_fold", "epoch"]).to_csv(paths["training_log"], index=False)
+    result.fold_audit.sort_values(["model_name", "seed", "outer_fold"]).to_csv(paths["fold_audit"], index=False)
+    paths["config_used"].write_text(_config_snapshot(config), encoding="utf-8")
+    paths["no_leakage_report"].write_text(_no_leakage_text(result), encoding="utf-8")
+    paths["report"].write_text(_phase6_report(result, config), encoding="utf-8")
+    return {key: str(path) for key, path in paths.items()}
+
+
 def run_matrixnet_lopo(inputs: MatrixNetInputs, config: MatrixNetRunConfig) -> MatrixNetRunResult:
     rows: list[dict[str, object]] = []
     logs: list[dict[str, object]] = []
@@ -404,3 +431,111 @@ def _selection_mode(config: MatrixNetRunConfig) -> str:
     if config.run_mode == "full" and any(len(values) > 1 for values in (config.learning_rates, config.weight_decays, config.dropouts, config.embedding_dims, config.hidden_dims)):
         return "fixed_first_config_no_grid_search"
     return "fixed_config"
+
+
+def _config_snapshot(config: MatrixNetRunConfig) -> str:
+    lines = [
+        f"run_mode: {config.run_mode}",
+        f"max_epochs: {config.max_epochs}",
+        f"patience: {config.patience}",
+        f"batch_size: {config.batch_size}",
+        f"selection_mode: {_selection_mode(config)}",
+        "models:",
+    ]
+    lines.extend([f"  - {model}" for model in config.models])
+    lines.append("seeds: [" + ", ".join(map(str, config.seeds)) + "]")
+    lines.append("learning_rates: [" + ", ".join(map(str, config.learning_rates)) + "]")
+    lines.append("weight_decays: [" + ", ".join(map(str, config.weight_decays)) + "]")
+    lines.append("dropouts: [" + ", ".join(map(str, config.dropouts)) + "]")
+    lines.append("embedding_dims: [" + ", ".join(map(str, config.embedding_dims)) + "]")
+    lines.append("hidden_dims: [" + ", ".join(map(str, config.hidden_dims)) + "]")
+    return "\n".join(lines) + "\n"
+
+
+def _no_leakage_text(result: MatrixNetRunResult) -> str:
+    audit = result.fold_audit
+    checks = [
+        ("test patient excluded from train", bool(audit["test_excluded_from_train"].all()) if not audit.empty else False),
+        ("test patient excluded from val", bool(audit["test_excluded_from_val"].all()) if not audit.empty else False),
+        (
+            "no duplicated model-patient-seed predictions",
+            not result.predictions.duplicated(["model_name", "patient_id", "seed"]).any(),
+        ),
+        ("outputs are patient-level predictions", {"patient_id", "predicted_score"} <= set(result.predictions.columns)),
+    ]
+    return "\n".join([f"{'PASS' if ok else 'FAIL'}: {name}" for name, ok in checks]) + "\n"
+
+
+def _phase6_report(result: MatrixNetRunResult, config: MatrixNetRunConfig) -> str:
+    primary = result.metrics[result.metrics["model_name"].isin(PRIMARY_MODELS)].copy()
+    secondary = result.metrics[~result.metrics["model_name"].isin(PRIMARY_MODELS)].copy()
+    lines = [
+        "# Phase 6 MatrixNet Report",
+        "",
+        f"Run mode: **{config.run_mode}**",
+        "",
+        "## Objective",
+        "",
+        "Phase 6 evaluates supervised no-SSL Lin-style MatrixNet models for baseline EEG prognosis. No self-supervised pretraining, SSL, BYOL, SimSiam, MAE, or masked matrix modeling was started in this branch.",
+        "",
+        "## Input Artifact Audit",
+        "",
+        "- Matrix rows are verified through `matrix_subject_index.csv`.",
+        "- FC matrices shaped `[N, 2, edge, band, metric]` are canonicalized to `[N, C, edge, band]`, preserving ROI-edge by frequency-band structure.",
+        "- Phase 5.2 metrics are used only for comparison, not for MatrixNet training.",
+        "",
+        "## Training Settings",
+        "",
+        f"- Seeds: {', '.join(map(str, config.seeds))}",
+        f"- Max epochs: {config.max_epochs}",
+        f"- Patience: {config.patience}",
+        f"- Batch size: {config.batch_size}",
+        f"- Selection mode: `{_selection_mode(config)}`",
+        "",
+        "Fast mode is smoke-only: bootstrap CI and permutation p-value may be NaN, and these results are not for scientific interpretation.",
+        "Full mode must implement bootstrap CI and permutation testing before scientific interpretation.",
+        "Full mode must state whether hyperparameters were selected by inner validation or a fixed configuration was used; this implementation records fixed-first configuration if lists contain multiple values.",
+        "",
+        "## LOPO No-Leakage Summary",
+        "",
+        _no_leakage_text(result).strip(),
+        "",
+        "## Primary EEG-Only MatrixNet Models",
+        "",
+        _markdown_table(primary),
+        "",
+        "Primary Phase 6 conclusions should focus on EEG-only MatrixNet models M8a-M8d.",
+        "",
+        "## Secondary Fusion Models",
+        "",
+        _markdown_table(secondary),
+        "",
+        "M12 clinical+EEG is secondary and must not replace the EEG-only primary model family.",
+        "",
+        "## Phase 5.2 Comparison",
+        "",
+        "MatrixNet metrics include differences from the best Phase 5.2 ML ROC-AUC, FMA-only ROC-AUC, and clinical-only ROC-AUC when `ml_metrics_all.csv` is available. Flattened matrix controls from Phase 5.2 remain the direct control comparison.",
+        "",
+        "## Scientific Caution",
+        "",
+        "Do not claim EEG efficacy from fast-mode results. The supervised sample size is small, and any scientific interpretation requires full-mode stability, confidence intervals, permutation testing, and leakage checks.",
+        "",
+        "## Phase 7 Recommendation",
+        "",
+        "Phase 7 may evaluate SSL-MatrixNet only after supervised Phase 6 behavior is stable and audited.",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def _markdown_table(frame: pd.DataFrame) -> str:
+    if frame.empty:
+        return "_No rows._"
+    display = frame.copy()
+    for column in display.columns:
+        if pd.api.types.is_float_dtype(display[column]):
+            display[column] = display[column].map(lambda value: "" if pd.isna(value) else f"{float(value):.3f}")
+    columns = list(display.columns)
+    rows = ["| " + " | ".join(columns) + " |", "| " + " | ".join(["---"] * len(columns)) + " |"]
+    for _, row in display.iterrows():
+        rows.append("| " + " | ".join(str(row[column]) for column in columns) + " |")
+    return "\n".join(rows)
