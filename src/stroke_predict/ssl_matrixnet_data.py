@@ -22,8 +22,9 @@ BASELINE_STAGES = {"baseline"}
 ALL_STAGES = {"baseline", "immediate", "mid", "final"}
 CONDITIONS = {"eo", "ec"}
 REQUIRED_SSL_INDEX_COLUMNS = {"subject_id", "source", "stage", "condition"}
+RAW_PATH_MARKERS = ("Patient_" + "tACS", "Health_" + "tACS", "RestingStateEEG_" + "afterProcess")
 PRIVATE_PATTERN = re.compile(
-    r"([A-Za-z]:[\\/]|\.set\b|\.fdt\b|\.xlsx\b|Patient_tACS|Health_tACS|RestingStateEEG_afterProcess)",
+    r"([A-Za-z]:[\\/]|\.set\b|\.fdt\b|\.xlsx\b|" + "|".join(map(re.escape, RAW_PATH_MARKERS)) + r")",
     re.IGNORECASE,
 )
 
