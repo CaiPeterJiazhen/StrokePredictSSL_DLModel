@@ -15,6 +15,15 @@ def test_matrixnet_accepts_psd_only_inputs() -> None:
     assert torch.isfinite(logits).all()
 
 
+def test_matrixnet_accepts_single_view_psd_inputs() -> None:
+    model = MatrixNet(MatrixNetConfig(use_psd=True, use_fc=False, use_tacs=False, use_clinical=False))
+    logits = model(
+        psd_eo=torch.randn(4, 62, 90),
+        psd_ec=torch.randn(4, 62, 90),
+    )
+    assert logits.shape == (4,)
+
+
 def test_matrixnet_accepts_fc_only_inputs() -> None:
     model = MatrixNet(MatrixNetConfig(use_psd=False, use_fc=True, use_tacs=False, use_clinical=False))
     logits = model(

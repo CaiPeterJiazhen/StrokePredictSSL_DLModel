@@ -134,8 +134,10 @@ class MatrixNet(nn.Module):
     def canonicalize_psd(self, x: torch.Tensor) -> torch.Tensor:
         x = x.float()
         if x.ndim == 3:
-            return x.unsqueeze(1)
+            return x.unsqueeze(1).repeat(1, 2, 1, 1)
         if x.ndim == 4:
+            if x.shape[1] == 1:
+                return x.repeat(1, 2, 1, 1)
             return x
         raise ValueError(f"PSD input must be [N,H,W] or [N,C,H,W], found {tuple(x.shape)}")
 
