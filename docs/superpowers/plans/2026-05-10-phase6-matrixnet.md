@@ -13,9 +13,9 @@
 ## File Structure
 
 - Create `src/stroke_predict/matrixnet.py`
-  - PyTorch `MatrixBranch`、`VectorBranch`、`MatrixNetConfig`、`MatrixNet`。
+  - PyTorch `MatrixBranch`、`VectorBranch`、`MatrixNetConfig`、`MatrixNet`，以及 PSD/FC canonicalization。
 - Create `src/stroke_predict/matrixnet_data.py`
-  - 加载 cohort/folds/matrices/vector features/comparison metrics，并验证 subject alignment。
+  - 加载 cohort/folds/matrices/vector features/comparison metrics，生成或要求 `matrix_subject_index.csv`，并验证 subject alignment。
 - Create `src/stroke_predict/matrixnet_preprocessing.py`
   - Fold-safe matrix z-score、vector median impute + scaling、audit stats。
 - Create `src/stroke_predict/matrixnet_training.py`
@@ -68,6 +68,12 @@ def test_matrixnet_accepts_fc_only_inputs() -> None:
     )
     assert logits.shape == (3,)
     assert torch.isfinite(logits).all()
+
+
+def test_fc_canonicalization_preserves_edge_by_band_structure() -> None:
+    model = MatrixNet(MatrixNetConfig(use_psd=False, use_fc=True, use_tacs=False, use_clinical=False))
+    canonical = model.canonicalize_fc(torch.randn(3, 2, 36, 6, 2))
+    assert canonical.shape == (3, 4, 36, 6)
 
 
 def test_matrixnet_accepts_psd_fc_tacs_clinical_inputs() -> None:
@@ -135,10 +141,10 @@ class MatrixNetConfig:
 
 
 class MatrixBranch(nn.Module):
-    def __init__(self, embedding_dim: int, dropout: float) -> None:
+    def __init__(self, in_channels: int, embedding_dim: int, dropout: float) -> None:
         super().__init__()
         self.features = nn.Sequential(
-            nn.Conv2d(1, 8, kernel_size=3, padding=1),
+            nn.Conv2d(in_channels, 8, kernel_size=3, padding=1),
             nn.BatchNorm2d(8),
             nn.GELU(),
             nn.Dropout2d(dropout),
@@ -182,8 +188,8 @@ class MatrixNet(nn.Module):
         if not any([config.use_psd, config.use_fc, config.use_tacs, config.use_clinical]):
             raise ValueError("At least one input family must be enabled")
         self.config = config
-        self.psd_branch = MatrixBranch(config.embedding_dim, config.dropout) if config.use_psd else None
-        self.fc_branch = MatrixBranch(config.embedding_dim, config.dropout) if config.use_fc else None
+        self.psd_branch = MatrixBranch(2, config.embedding_dim, config.dropout) if config.use_psd else None
+        self.fc_branch = MatrixBranch(4, config.embedding_dim, config.dropout) if config.use_fc else None
         self.tacs_branch = (
             VectorBranch(config.tacs_dim, config.embedding_dim, config.hidden_dim, config.dropout)
             if config.use_tacs
@@ -221,11 +227,11 @@ class MatrixNet(nn.Module):
         if self.psd_branch is not None:
             if psd_eo is None or psd_ec is None:
                 raise ValueError("PSD inputs are required for this MatrixNet")
-            embeddings.extend([self.psd_branch(psd_eo), self.psd_branch(psd_ec)])
+            embeddings.extend([self.psd_branch(self.canonicalize_psd(psd_eo)), self.psd_branch(self.canonicalize_psd(psd_ec))])
         if self.fc_branch is not None:
             if fc_eo is None or fc_ec is None:
                 raise ValueError("FC inputs are required for this MatrixNet")
-            embeddings.extend([self.fc_branch(fc_eo), self.fc_branch(fc_ec)])
+            embeddings.extend([self.fc_branch(self.canonicalize_fc(fc_eo)), self.fc_branch(self.canonicalize_fc(fc_ec))])
         if self.tacs_branch is not None:
             if tacs is None:
                 raise ValueError("tACS input is required for this MatrixNet")
@@ -237,19 +243,24 @@ class MatrixNet(nn.Module):
         fused = torch.cat(embeddings, dim=1)
         return self.classifier(fused).squeeze(-1)
 
+    def canonicalize_psd(self, x: torch.Tensor) -> torch.Tensor:
+        x = x.float()
+        if x.ndim == 3:
+            return x.unsqueeze(1)
+        if x.ndim == 4:
+            return x
+        raise ValueError(f"PSD input must be [N,H,W] or [N,C,H,W], found {tuple(x.shape)}")
 
-def _as_single_channel_image(x: torch.Tensor) -> torch.Tensor:
-    x = x.float()
-    if x.ndim == 3:
-        return x.unsqueeze(1)
-    if x.ndim == 4 and x.shape[1] == 1:
-        return x
-    if x.ndim >= 4:
-        batch = x.shape[0]
-        height = x.shape[-2]
-        width = x.shape[-1]
-        return x.reshape(batch, 1, -1, width) if x.ndim > 4 else x.reshape(batch, 1, x.shape[1] * height, width)
-    raise ValueError(f"Matrix input must have at least 3 dimensions, found {tuple(x.shape)}")
+    def canonicalize_fc(self, x: torch.Tensor) -> torch.Tensor:
+        x = x.float()
+        if x.ndim == 4:
+            return x
+        if x.ndim == 5:
+            batch, views, edges, bands, metrics = x.shape
+            return x.permute(0, 1, 4, 2, 3).reshape(batch, views * metrics, edges, bands)
+        raise ValueError(f"FC input must be [N,C,E,B] or [N,V,E,B,M], found {tuple(x.shape)}")
+
+
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -291,7 +302,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from stroke_predict.matrixnet_data import load_matrixnet_inputs, validate_fold_registry
+from stroke_predict.matrixnet_data import ensure_matrix_subject_index, load_matrixnet_inputs, validate_fold_registry
 
 
 def _write_minimal_inputs(root: Path) -> None:
@@ -345,6 +356,10 @@ def _write_minimal_inputs(root: Path) -> None:
         "fc_roi_ec.npy": (3, 2, 3, 2, 2),
     }.items():
         np.save(root / "matrices" / name, np.ones(shape, dtype=np.float32))
+    pd.DataFrame({"row_index": [0, 1, 2], "subject_id": ["S01", "S02", "S03"]}).to_csv(
+        root / "matrices" / "matrix_subject_index.csv",
+        index=False,
+    )
     pd.DataFrame({"subject_id": ["S01", "S02", "S03"], "tacs_a": [1.0, None, 3.0]}).to_csv(
         root / "features" / "features_tacs_target_summary.csv",
         index=False,
@@ -364,6 +379,25 @@ def test_load_matrixnet_inputs_fails_when_matrix_rows_do_not_match_subjects(tmp_
     _write_minimal_inputs(tmp_path)
     np.save(tmp_path / "matrices" / "psd_eo.npy", np.ones((2, 2, 4, 5), dtype=np.float32))
     with pytest.raises(ValueError, match="psd_eo.npy first dimension"):
+        load_matrixnet_inputs(tmp_path)
+
+
+def test_load_matrixnet_inputs_requires_verifiable_matrix_subject_index(tmp_path: Path) -> None:
+    _write_minimal_inputs(tmp_path)
+    (tmp_path / "matrices" / "matrix_subject_index.csv").unlink()
+    index_path = ensure_matrix_subject_index(tmp_path, allow_generate=True)
+    assert index_path.exists()
+    loaded = pd.read_csv(index_path)
+    assert loaded["subject_id"].tolist() == ["S01", "S02", "S03"]
+
+
+def test_load_matrixnet_inputs_fails_on_mismatched_matrix_subject_index(tmp_path: Path) -> None:
+    _write_minimal_inputs(tmp_path)
+    pd.DataFrame({"row_index": [0, 1, 2], "subject_id": ["S01", "S03", "S02"]}).to_csv(
+        tmp_path / "matrices" / "matrix_subject_index.csv",
+        index=False,
+    )
+    with pytest.raises(ValueError, match="matrix_subject_index"):
         load_matrixnet_inputs(tmp_path)
 
 
@@ -409,6 +443,7 @@ import pandas as pd
 
 LABEL_TO_INT = {"Poor": 0, "Good": 1}
 MATRIX_FILES = ("psd_eo.npy", "psd_ec.npy", "fc_roi_eo.npy", "fc_roi_ec.npy")
+MATRIX_SUBJECT_INDEX = "matrix_subject_index.csv"
 
 
 @dataclass(frozen=True)
@@ -441,6 +476,9 @@ def load_matrixnet_inputs(output_dir: str | Path) -> MatrixNetInputs:
     if unknown:
         raise ValueError(f"Labels must be Good/Poor, found: {unknown}")
     subject_ids = supervised["subject_id"].astype(str).tolist()
+    matrix_subjects = load_or_create_matrix_subject_index(root, subject_ids, allow_generate=True)
+    if matrix_subjects != subject_ids:
+        raise ValueError("matrix_subject_index.csv does not match sorted supervised_main subject order")
     labels = np.asarray([LABEL_TO_INT[label] for label in label_names], dtype=np.int64)
 
     matrix_dir = _matrix_dir(root)
@@ -508,6 +546,40 @@ def _matrix_dir(root: Path) -> Path:
         return legacy
     missing = [name for name in MATRIX_FILES if not (canonical / name).exists() and not (legacy / name).exists()]
     raise FileNotFoundError(f"Missing matrix inputs: {missing}")
+
+
+def ensure_matrix_subject_index(output_dir: str | Path, *, allow_generate: bool) -> Path:
+    root = Path(output_dir)
+    cohort = pd.read_csv(root / "cohort" / "cohort_master.csv")
+    supervised = cohort.loc[cohort["role"].eq("supervised_main")].copy().sort_values("subject_id").reset_index(drop=True)
+    subject_ids = supervised["subject_id"].astype(str).tolist()
+    matrix_dir = _matrix_dir(root)
+    path = matrix_dir / MATRIX_SUBJECT_INDEX
+    if path.exists():
+        _load_matrix_subjects(path, expected_n=len(subject_ids))
+        return path
+    if not allow_generate:
+        raise FileNotFoundError("matrix_subject_index.csv is required to verify matrix row order")
+    pd.DataFrame({"row_index": list(range(len(subject_ids))), "subject_id": subject_ids}).to_csv(path, index=False)
+    return path
+
+
+def load_or_create_matrix_subject_index(root: Path, subject_ids: list[str], *, allow_generate: bool) -> list[str]:
+    path = ensure_matrix_subject_index(root, allow_generate=allow_generate)
+    return _load_matrix_subjects(path, expected_n=len(subject_ids))
+
+
+def _load_matrix_subjects(path: Path, *, expected_n: int) -> list[str]:
+    frame = pd.read_csv(path)
+    missing = {"row_index", "subject_id"} - set(frame.columns)
+    if missing:
+        raise ValueError(f"matrix_subject_index.csv missing columns: {sorted(missing)}")
+    frame = frame.sort_values("row_index").reset_index(drop=True)
+    if frame["row_index"].astype(int).tolist() != list(range(expected_n)):
+        raise ValueError("matrix_subject_index.csv row_index must be contiguous from 0")
+    if len(frame) != expected_n:
+        raise ValueError(f"matrix_subject_index.csv row count {len(frame)} does not match expected {expected_n}")
+    return frame["subject_id"].astype(str).tolist()
 
 
 def _clinical_frame(supervised: pd.DataFrame) -> pd.DataFrame:
@@ -1304,7 +1376,15 @@ def _phase6_report(result: MatrixNetRunResult, config: MatrixNetRunConfig) -> st
             "",
             "Phase 6 is supervised no-SSL MatrixNet. No self-supervised pretraining was started.",
             "",
-            "Fast mode is an engineering and smoke-test setting. Do not claim EEG efficacy from fast-mode results.",
+            "Fast mode is smoke-only: bootstrap CI and permutation p-value may be NaN, and these results are not for scientific interpretation.",
+            "",
+            "Full mode must implement bootstrap CI and permutation testing before scientific interpretation.",
+            "",
+            "Full mode must report whether hyperparameters were selected by inner validation or whether a fixed configuration was used.",
+            "",
+            "Primary Phase 6 conclusions focus on EEG-only MatrixNet models M8a-M8d. M12 clinical+EEG is secondary fusion.",
+            "",
+            "Do not claim EEG efficacy from fast-mode results.",
             "",
             "## MatrixNet performance",
             "",

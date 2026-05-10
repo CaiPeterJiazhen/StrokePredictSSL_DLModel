@@ -48,7 +48,8 @@ Phase 6 的核心问题是：在严格 patient-level LOPO 下，Lin-style 多分
   - 无 NaN/Inf
 - `outputs/features/feature_dictionary.csv`
   - 包含 PSD/FC matrix 轴索引元数据
-  - `axis0_subject_index` 为空，但上游脚本按 `supervised_main` 的 `subject_id` 排序堆叠矩阵
+  - `axis0_subject_index` 为空；Phase 6 必须生成或要求显式 `outputs/matrices/matrix_subject_index.csv`
+  - Phase 6 不只依赖 sorted `supervised_main`；若无法验证矩阵行顺序，必须 fail loudly
 - `outputs/features/features_tacs_target_summary.csv`
   - shape `(19, 731)`
   - tACS connectivity 数值列 384 个，未发现全 NaN connectivity 列
@@ -119,11 +120,15 @@ Secondary model：
 
 - 读取 cohort、folds、fold registry、PSD/FC matrices、tACS summary、clinical columns、Phase 5.2 metrics。
 - 优先使用 `outputs/matrices/*.npy`，如缺失再尝试 legacy `outputs/features/matrices/*.npy`。
-- 从 `cohort_master.csv` 推断矩阵行顺序：`role == supervised_main` 后按 `subject_id` 排序。
+- 读取或生成 `outputs/matrices/matrix_subject_index.csv`：
+  - required columns: `row_index`, `subject_id`
+  - optional columns: `source`, `role`, `label_primary`
+  - 如果文件不存在，Phase 6 可在确认矩阵第一维与 sorted supervised_main 完全匹配后生成该 index 文件
+  - 如果文件存在，必须用它验证每个矩阵 row 与 patient ID 的对应关系
 - 验证矩阵第一维等于 supervised_main 病人数。
-- 验证 `outer_folds.json` 的 `supervised_subjects` 与矩阵 subject order 集合一致。
+- 验证 `outer_folds.json` 的 `supervised_subjects` 与 `matrix_subject_index.csv` subject set 一致。
 - 验证每个 fold 的 test patient 不在 train/inner-val/fit/threshold subjects 中。
-- 如果将来出现显式 matrix metadata，则优先使用显式 metadata；若 metadata 与 cohort 推断不一致则 fail loudly。
+- 如果显式 metadata 与 cohort/folds 不一致，fail loudly，不继续训练。
 
 不读取原始 `.set` 或 `.fdt`。Phase 6 只消费已生成的 public/去标识化 baseline artifacts。
 
@@ -161,8 +166,14 @@ Secondary model：
 核心类：
 
 - `MatrixBranch`
-  - 输入可为 `[batch, H, W]` 或 `[batch, 1, H, W]` 或更高维矩阵
-  - 高维矩阵按最后两个维度作为 H/W，其余非 batch 维展平为 channel-like spatial 维前的组合，最终规范到 `[batch, 1, H, W]` 或 `[batch, 1, H, W_flat]`
+  - PSD 输入 canonicalization：
+    - `[N, 2, 62, 90]` 保持为 `[N, C=2, H=62, W=90]`
+    - `[N, 62, 90]` 转为 `[N, C=1, H=62, W=90]`
+  - FC 输入 canonicalization：
+    - 对 `[N, 2, 36, 6, 2]` 明确转换为 `[N, C=4, H=36, W=6]`
+    - `C` 由 view/hemisphere-space 和 FC metric 维组合而成
+    - 保留 ROI-edge × frequency-band 的二维空间结构
+    - 不把 ROI-edge、band、metric 全部任意 flatten 到一个 spatial axis
   - Conv2d -> BatchNorm2d -> GELU -> Dropout
   - Conv2d -> BatchNorm2d -> GELU -> Dropout
   - Conv2d -> BatchNorm2d -> GELU
@@ -205,11 +216,18 @@ Run modes：
   - patience: 5 到 10
   - hyperparameter grid 只保留 1 个小配置
   - 目标：调通 19-fold LOPO 和输出链路
+  - bootstrap CI 和 permutation p-value 可为 NaN
+  - report 必须写明 smoke-only，不做科学解释
 - `full`
   - seeds: `[0, 1, 2, 3, 4]`
   - max_epochs: 200
   - patience: 25
   - grid: learning rate `[1e-3, 3e-4, 1e-4]`，weight decay `[1e-2, 1e-3, 1e-4]`，dropout `[0.3, 0.5]`，embedding_dim `[32, 64]`
+  - full mode 必须在报告中明确：
+    - 若实现了真实 inner-validation hyperparameter selection，则说明选择逻辑和 inner split 使用方式
+    - 若未实现搜索，则声明使用 fixed configuration
+    - 不得把只取每个 list 第一个值伪装成 grid search
+  - full mode 在科学解释前必须实现 bootstrap CI 和 permutation testing
 
 Inner validation：
 
@@ -289,6 +307,11 @@ Report 必须明确：
 
 - Phase 6 是 supervised no-SSL。
 - fast mode 结果只用于开发，不做疗效结论。
+- fast mode report 必须写明 smoke-only。
+- full mode 若无 bootstrap CI/permutation testing，不允许科学解释。
+- full mode 若无真实 hyperparameter selection，必须写明 fixed configuration。
+- primary conclusions 只能聚焦 EEG-only MatrixNet：`M8a`、`M8b`、`M8c`、`M8d`。
+- `M12_matrixnet_clinical_eeg` 是 secondary fusion，不替代 EEG-only primary conclusions。
 - 若 MatrixNet 未优于 Phase 5.2 baselines，必须如实报告。
 - 推荐 Phase 7 再做 SSL-MatrixNet。
 
