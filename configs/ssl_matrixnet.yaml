@@ -1,0 +1,66 @@
+output_dir: outputs
+run_id: phase7
+run_modes:
+  fast:
+    seeds: [0]
+    ssl_epochs: 2
+    finetune_epochs: 2
+    patience: 1
+    batch_size: 4
+    learning_rates: [0.001]
+    weight_decays: [0.01]
+    dropouts: [0.3]
+    embedding_dims: [32]
+    hidden_dims: [64]
+    mask_ratio: 0.25
+    device: cpu
+    require_cuda: false
+    bootstrap_resamples: 100
+    permutation_resamples: 100
+    random_seed: 42
+    orientation_calibration: inner_val_auc
+  full:
+    seeds: [0, 1, 2, 3, 4]
+    ssl_epochs: 100
+    finetune_epochs: 120
+    patience: 20
+    batch_size: 4
+    learning_rates: [0.001]
+    weight_decays: [0.01]
+    dropouts: [0.5]
+    embedding_dims: [32]
+    hidden_dims: [64]
+    mask_ratio: 0.25
+    device: cuda
+    require_cuda: true
+    bootstrap_resamples: 1000
+    permutation_resamples: 1000
+    random_seed: 42
+    orientation_calibration: inner_val_auc
+models:
+  fast:
+    stroke_baseline:
+      - M9a_sslA_fc_only
+    stroke_healthy_baseline:
+      - M9a_sslB_fc_only_fast
+    stroke_all_stage:
+      - M9a_sslC_fc_only_fast
+    stroke_all_stage_healthy:
+      - M9a_sslD_fc_only_fast
+  full:
+    stroke_baseline:
+      - M9a_sslA_fc_only
+      - M9b_sslA_psd_fc
+      - M9c_sslA_psd_fc_tacs
+      - M13_sslA_clinical_eeg
+preprocessing:
+  psd_transform: none
+  matrix_normalization: zscore
+  vector_imputation: train_median
+  vector_scaling: train_standard
+ssl:
+  method: masked_matrix_modeling
+  supported_mask_ratios: [0.15, 0.25, 0.40]
+  psd_loss_weight: 1.0
+  fc_loss_weight: 1.0
+  treatment_stage_supervised_input: false
